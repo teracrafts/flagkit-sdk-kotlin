@@ -8,6 +8,7 @@ import kotlin.math.min
 import kotlin.math.pow
 import kotlin.random.Random
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
 
 /**
  * Manages background polling for flag updates.
@@ -76,7 +77,7 @@ class PollingManager(
         }
         val base = interval.inWholeMilliseconds * multiplier
         val jitter = base * 0.1 * Random.nextDouble()
-        return kotlin.time.Duration.Companion.milliseconds((base + jitter).toLong())
+        return (base + jitter).toLong().milliseconds
     }
 
     companion object {

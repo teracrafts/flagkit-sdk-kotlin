@@ -24,6 +24,7 @@ dependencies {
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.0")
     testImplementation("io.ktor:ktor-client-mock:2.3.7")
     testImplementation("io.mockk:mockk:1.13.9")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
 tasks.test {

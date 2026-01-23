@@ -6,13 +6,14 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.time.Instant
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * Circuit breaker pattern implementation for resilient HTTP calls.
  */
 class CircuitBreaker(
     private val failureThreshold: Int = 5,
-    private val resetTimeout: Duration = kotlin.time.Duration.Companion.seconds(30)
+    private val resetTimeout: Duration = 30.seconds
 ) {
     enum class State {
         CLOSED,

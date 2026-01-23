@@ -21,7 +21,8 @@ data class FlagKitOptions(
     val retryAttempts: Int = DEFAULT_RETRY_ATTEMPTS,
     val circuitBreakerThreshold: Int = DEFAULT_CIRCUIT_BREAKER_THRESHOLD,
     val circuitBreakerResetTimeout: Duration = DEFAULT_CIRCUIT_BREAKER_RESET_TIMEOUT,
-    val bootstrap: Map<String, Any>? = null
+    val bootstrap: Map<String, Any>? = null,
+    val isLocal: Boolean = false
 ) {
     fun validate() {
         require(apiKey.isNotBlank()) {
@@ -58,6 +59,7 @@ data class FlagKitOptions(
         private var circuitBreakerThreshold = DEFAULT_CIRCUIT_BREAKER_THRESHOLD
         private var circuitBreakerResetTimeout = DEFAULT_CIRCUIT_BREAKER_RESET_TIMEOUT
         private var bootstrap: Map<String, Any>? = null
+        private var isLocal = false
 
         fun pollingInterval(interval: Duration) = apply { this.pollingInterval = interval }
         fun cacheTtl(ttl: Duration) = apply { this.cacheTtl = ttl }
@@ -69,6 +71,8 @@ data class FlagKitOptions(
         fun timeout(timeout: Duration) = apply { this.timeout = timeout }
         fun retryAttempts(attempts: Int) = apply { this.retryAttempts = attempts }
         fun bootstrap(data: Map<String, Any>) = apply { this.bootstrap = data }
+        fun isLocal(isLocal: Boolean) = apply { this.isLocal = isLocal }
+        fun isLocal() = apply { this.isLocal = true }
 
         fun build() = FlagKitOptions(
             apiKey = apiKey,
@@ -83,7 +87,8 @@ data class FlagKitOptions(
             retryAttempts = retryAttempts,
             circuitBreakerThreshold = circuitBreakerThreshold,
             circuitBreakerResetTimeout = circuitBreakerResetTimeout,
-            bootstrap = bootstrap
+            bootstrap = bootstrap,
+            isLocal = isLocal
         )
     }
 

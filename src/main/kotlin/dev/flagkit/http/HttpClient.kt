@@ -17,6 +17,8 @@ import kotlin.math.min
 import kotlin.math.pow
 import kotlin.random.Random
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * HTTP client with retry logic and circuit breaker integration.
@@ -25,7 +27,8 @@ class HttpClient(
     private val apiKey: String,
     private val timeout: Duration,
     private val retryAttempts: Int,
-    private val circuitBreaker: CircuitBreaker
+    private val circuitBreaker: CircuitBreaker,
+    private val isLocal: Boolean = false
 ) {
     private val json = Json {
         ignoreUnknownKeys = true
@@ -98,7 +101,8 @@ class HttpClient(
         params: Map<String, String>?,
         body: Map<String, Any?>?
     ): Map<String, Any?> {
-        val response = client.request("${DEFAULT_BASE_URL}$path") {
+        val baseUrl = if (isLocal) LOCAL_BASE_URL else DEFAULT_BASE_URL
+        val response = client.request("${baseUrl}$path") {
             this.method = method
             params?.forEach { (key, value) -> parameter(key, value) }
             body?.let { setBody(it) }
@@ -146,7 +150,7 @@ class HttpClient(
         val delay = BASE_RETRY_DELAY.inWholeMilliseconds * 2.0.pow(attempt - 1)
         val cappedDelay = min(delay, MAX_RETRY_DELAY.inWholeMilliseconds.toDouble())
         val jitter = cappedDelay * JITTER_FACTOR * Random.nextDouble()
-        return kotlin.time.Duration.Companion.milliseconds((cappedDelay + jitter).toLong())
+        return (cappedDelay + jitter).toLong().milliseconds
     }
 
     fun close() {
@@ -155,8 +159,9 @@ class HttpClient(
 
     companion object {
         internal const val DEFAULT_BASE_URL = "https://api.flagkit.dev/api/v1"
-        private val BASE_RETRY_DELAY = kotlin.time.Duration.Companion.seconds(1)
-        private val MAX_RETRY_DELAY = kotlin.time.Duration.Companion.seconds(30)
+        private const val LOCAL_BASE_URL = "http://localhost:8200/api/v1"
+        private val BASE_RETRY_DELAY = 1.seconds
+        private val MAX_RETRY_DELAY = 30.seconds
         private const val JITTER_FACTOR = 0.1
     }
 }

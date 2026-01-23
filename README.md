@@ -72,6 +72,18 @@ val options = FlagKitOptions.builder("sdk_your_api_key")
 val client = FlagKit.initialize(options)
 ```
 
+## Local Development
+
+For local development, use the `isLocal` option to connect to a local FlagKit server running on `http://localhost:8200`:
+
+```kotlin
+val options = FlagKitOptions.builder("sdk_your_api_key")
+    .isLocal()  // or .isLocal(true)
+    .build()
+
+val client = FlagKit.initialize(options)
+```
+
 ## Using the Client Directly
 
 ```kotlin
