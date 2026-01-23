@@ -28,7 +28,7 @@ class HttpClient(
     private val timeout: Duration,
     private val retryAttempts: Int,
     private val circuitBreaker: CircuitBreaker,
-    private val isLocal: Boolean = false
+    private val localPort: Int? = null
 ) {
     private val json = Json {
         ignoreUnknownKeys = true
@@ -101,7 +101,7 @@ class HttpClient(
         params: Map<String, String>?,
         body: Map<String, Any?>?
     ): Map<String, Any?> {
-        val baseUrl = if (isLocal) LOCAL_BASE_URL else DEFAULT_BASE_URL
+        val baseUrl = getBaseUrl(localPort)
         val response = client.request("${baseUrl}$path") {
             this.method = method
             params?.forEach { (key, value) -> parameter(key, value) }
@@ -159,9 +159,11 @@ class HttpClient(
 
     companion object {
         internal const val DEFAULT_BASE_URL = "https://api.flagkit.dev/api/v1"
-        private const val LOCAL_BASE_URL = "http://localhost:8200/api/v1"
         private val BASE_RETRY_DELAY = 1.seconds
         private val MAX_RETRY_DELAY = 30.seconds
         private const val JITTER_FACTOR = 0.1
+
+        fun getBaseUrl(localPort: Int?): String =
+            if (localPort != null) "http://localhost:$localPort/api/v1" else DEFAULT_BASE_URL
     }
 }
