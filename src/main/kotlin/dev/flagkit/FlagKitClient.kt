@@ -34,7 +34,6 @@ class FlagKitClient(
     )
 
     private val httpClient = HttpClient(
-        baseUrl = options.baseUrl,
         apiKey = options.apiKey,
         timeout = options.timeout,
         retryAttempts = options.retryAttempts,

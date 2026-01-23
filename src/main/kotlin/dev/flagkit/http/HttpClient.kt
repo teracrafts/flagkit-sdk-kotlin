@@ -22,7 +22,6 @@ import kotlin.time.Duration
  * HTTP client with retry logic and circuit breaker integration.
  */
 class HttpClient(
-    private val baseUrl: String,
     private val apiKey: String,
     private val timeout: Duration,
     private val retryAttempts: Int,
@@ -99,7 +98,7 @@ class HttpClient(
         params: Map<String, String>?,
         body: Map<String, Any?>?
     ): Map<String, Any?> {
-        val response = client.request("${baseUrl.trimEnd('/')}$path") {
+        val response = client.request("${DEFAULT_BASE_URL}$path") {
             this.method = method
             params?.forEach { (key, value) -> parameter(key, value) }
             body?.let { setBody(it) }
@@ -155,6 +154,7 @@ class HttpClient(
     }
 
     companion object {
+        internal const val DEFAULT_BASE_URL = "https://api.flagkit.dev/api/v1"
         private val BASE_RETRY_DELAY = kotlin.time.Duration.Companion.seconds(1)
         private val MAX_RETRY_DELAY = kotlin.time.Duration.Companion.seconds(30)
         private const val JITTER_FACTOR = 0.1

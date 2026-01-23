@@ -59,7 +59,6 @@ fun main() = runBlocking {
 
 ```kotlin
 val options = FlagKitOptions.builder("sdk_your_api_key")
-    .baseUrl("https://api.flagkit.dev/api/v1")
     .pollingInterval(30.seconds)
     .cacheTtl(300.seconds)
     .cacheEnabled(true)
