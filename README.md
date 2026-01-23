@@ -74,11 +74,11 @@ val client = FlagKit.initialize(options)
 
 ## Local Development
 
-For local development, use the `isLocal` option to connect to a local FlagKit server running on `http://localhost:8200`:
+For local development, use the `localPort` option to connect to a local FlagKit server:
 
 ```kotlin
 val options = FlagKitOptions.builder("sdk_your_api_key")
-    .isLocal()  // or .isLocal(true)
+    .localPort(8200)  // Uses http://localhost:8200/api/v1
     .build()
 
 val client = FlagKit.initialize(options)
