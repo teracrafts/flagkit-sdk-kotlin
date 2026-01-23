@@ -1,8 +1,7 @@
-package dev.flagkit
+package dev.flagkit.types
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
-import java.time.Instant
 
 /**
  * Represents the state of a feature flag.

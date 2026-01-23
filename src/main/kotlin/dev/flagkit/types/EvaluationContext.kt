@@ -1,4 +1,4 @@
-package dev.flagkit
+package dev.flagkit.types
 
 /**
  * Context for flag evaluation containing user and custom attributes.

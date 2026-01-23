@@ -1,4 +1,4 @@
-package dev.flagkit
+package dev.flagkit.error
 
 /**
  * Exception for FlagKit SDK errors.
@@ -7,7 +7,7 @@ class FlagKitException(
     val errorCode: ErrorCode,
     override val message: String,
     override val cause: Throwable? = null
-) : Exception("[$${errorCode.code}] $message", cause) {
+) : Exception("[${errorCode.code}] $message", cause) {
 
     val isRecoverable: Boolean
         get() = errorCode.isRecoverable

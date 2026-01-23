@@ -1,4 +1,4 @@
-package dev.flagkit
+package dev.flagkit.core
 
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.test.runTest

@@ -1,4 +1,4 @@
-package dev.flagkit
+package dev.flagkit.error
 
 import kotlin.test.Test
 import kotlin.test.assertEquals

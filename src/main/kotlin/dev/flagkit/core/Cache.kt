@@ -1,4 +1,4 @@
-package dev.flagkit
+package dev.flagkit.core
 
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock

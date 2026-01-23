@@ -1,5 +1,7 @@
-package dev.flagkit
+package dev.flagkit.http
 
+import dev.flagkit.error.ErrorCode
+import dev.flagkit.error.FlagKitException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.time.Instant

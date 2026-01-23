@@ -1,4 +1,4 @@
-package dev.flagkit
+package dev.flagkit.types
 
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.Serializable

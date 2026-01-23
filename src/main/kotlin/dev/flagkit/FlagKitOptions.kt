@@ -1,5 +1,7 @@
 package dev.flagkit
 
+import dev.flagkit.error.ErrorCode
+import dev.flagkit.error.FlagKitException
 import java.net.URL
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds

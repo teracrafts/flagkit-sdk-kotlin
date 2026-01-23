@@ -1,4 +1,4 @@
-package dev.flagkit
+package dev.flagkit.error
 
 /**
  * Error codes for FlagKit SDK errors.

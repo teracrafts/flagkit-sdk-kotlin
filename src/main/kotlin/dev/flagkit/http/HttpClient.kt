@@ -1,5 +1,7 @@
-package dev.flagkit
+package dev.flagkit.http
 
+import dev.flagkit.error.ErrorCode
+import dev.flagkit.error.FlagKitException
 import io.ktor.client.*
 import io.ktor.client.call.*
 import io.ktor.client.engine.cio.*
