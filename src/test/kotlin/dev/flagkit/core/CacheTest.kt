@@ -109,12 +109,15 @@ class CacheTest {
 
     @Test
     fun `test TTL expiration`() = runTest {
-        val cache = Cache<String>(ttl = 100.milliseconds, maxSize = 10)
+        // Use real delay for time-sensitive test
+        val cache = Cache<String>(ttl = 50.milliseconds, maxSize = 10)
 
         cache.set("key1", "value1")
         assertEquals("value1", cache.get("key1"))
 
-        delay(150)
+        // Use Thread.sleep for real time delay
+        @Suppress("BlockingMethodInNonBlockingContext")
+        Thread.sleep(100)
 
         assertNull(cache.get("key1"))
     }
