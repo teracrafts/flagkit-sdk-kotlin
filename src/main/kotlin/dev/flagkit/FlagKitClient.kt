@@ -38,7 +38,7 @@ class FlagKitClient(
         timeout = options.timeout,
         retryAttempts = options.retryAttempts,
         circuitBreaker = circuitBreaker,
-        isLocal = options.isLocal
+        localPort = options.localPort
     )
 
     private val cache = Cache<FlagState>(
