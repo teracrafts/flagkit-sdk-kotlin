@@ -46,7 +46,7 @@ class HttpClient(
         defaultRequest {
             contentType(ContentType.Application.Json)
             accept(ContentType.Application.Json)
-            header("Authorization", "Bearer $apiKey")
+            header("X-API-Key", apiKey)
             header("User-Agent", "FlagKit-Kotlin/1.0.0")
         }
     }
