@@ -68,26 +68,30 @@ class CircuitBreakerTest {
 
     @Test
     fun `test half open after timeout`() = runTest {
-        val breaker = CircuitBreaker(failureThreshold = 3, resetTimeout = 100.milliseconds)
+        val breaker = CircuitBreaker(failureThreshold = 3, resetTimeout = 50.milliseconds)
 
         breaker.recordFailure()
         breaker.recordFailure()
         breaker.recordFailure()
 
-        delay(150)
+        // Use Thread.sleep for real time delay
+        @Suppress("BlockingMethodInNonBlockingContext")
+        Thread.sleep(100)
 
         assertTrue(breaker.isHalfOpen())
     }
 
     @Test
     fun `test closes from half open on success`() = runTest {
-        val breaker = CircuitBreaker(failureThreshold = 3, resetTimeout = 100.milliseconds)
+        val breaker = CircuitBreaker(failureThreshold = 3, resetTimeout = 50.milliseconds)
 
         breaker.recordFailure()
         breaker.recordFailure()
         breaker.recordFailure()
 
-        delay(150)
+        // Use Thread.sleep for real time delay
+        @Suppress("BlockingMethodInNonBlockingContext")
+        Thread.sleep(100)
 
         breaker.isHalfOpen()
         breaker.recordSuccess()
