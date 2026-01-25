@@ -1,6 +1,7 @@
 package dev.flagkit
 
 import dev.flagkit.core.Cache
+import dev.flagkit.core.CacheStats
 import dev.flagkit.core.ContextManager
 import dev.flagkit.core.EventQueue
 import dev.flagkit.core.PollingManager
@@ -11,11 +12,189 @@ import dev.flagkit.types.EvaluationReason
 import dev.flagkit.types.EvaluationResult
 import dev.flagkit.types.FlagState
 import dev.flagkit.types.FlagValue
+import dev.flagkit.utils.DataType
+import dev.flagkit.utils.EncryptedStorage
+import dev.flagkit.utils.Logger
+import dev.flagkit.utils.SecurityException
+import dev.flagkit.utils.enforceNoPii
 import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.*
 import java.time.Instant
+import kotlin.time.Duration
+
+/**
+ * Internal logger adapter for the FlagKit client.
+ */
+private class ClientLogger : Logger {
+    override fun debug(message: String, data: Map<String, Any?>?) {
+        // Could be enhanced to use a proper logging framework
+    }
+
+    override fun info(message: String, data: Map<String, Any?>?) {
+        // Could be enhanced to use a proper logging framework
+    }
+
+    override fun warn(message: String, data: Map<String, Any?>?) {
+        System.err.println("[FlagKit WARN] $message")
+    }
+
+    override fun error(message: String, data: Map<String, Any?>?) {
+        System.err.println("[FlagKit ERROR] $message")
+    }
+}
+
+/**
+ * Cache wrapper that provides optional AES-256-GCM encryption for flag state values.
+ *
+ * When encryption is enabled, all flag state values are encrypted before storage
+ * and decrypted on retrieval using the API key for key derivation.
+ */
+private class EncryptingCache(
+    private val ttl: Duration,
+    private val maxSize: Int,
+    private val encryptionEnabled: Boolean,
+    apiKey: String
+) {
+    private val json = Json { ignoreUnknownKeys = true }
+
+    // Encrypted storage for key derivation (only if encryption is enabled)
+    private val encryptedStorage: EncryptedStorage? = if (encryptionEnabled) {
+        EncryptedStorage(apiKey)
+    } else null
+
+    // Internal storage: key -> (encrypted or plain JSON string, metadata)
+    private val entries = mutableMapOf<String, EncryptedCacheEntry>()
+    private val mutex = Mutex()
+    private var hitCount: Long = 0
+    private var missCount: Long = 0
+
+    private data class EncryptedCacheEntry(
+        val data: String, // encrypted or plain JSON depending on encryptionEnabled
+        val fetchedAt: java.time.Instant,
+        val expiresAt: java.time.Instant,
+        var lastAccessedAt: java.time.Instant = java.time.Instant.now()
+    ) {
+        val isExpired: Boolean
+            get() = java.time.Instant.now().isAfter(expiresAt)
+    }
+
+    suspend fun get(key: String): FlagState? = mutex.withLock {
+        val entry = entries[key]
+        if (entry == null) {
+            missCount++
+            return@withLock null
+        }
+        if (entry.isExpired) {
+            missCount++
+            return@withLock null
+        }
+        entry.lastAccessedAt = java.time.Instant.now()
+        hitCount++
+        deserialize(entry.data)
+    }
+
+    suspend fun getStale(key: String): FlagState? = mutex.withLock {
+        val entry = entries[key] ?: return@withLock null
+        deserialize(entry.data)
+    }
+
+    suspend fun set(key: String, value: FlagState, customTtl: Duration? = null) = mutex.withLock {
+        evictIfNeeded()
+        val now = java.time.Instant.now()
+        val effectiveTtl = customTtl ?: ttl
+        val serialized = serialize(value)
+        entries[key] = EncryptedCacheEntry(
+            data = serialized,
+            fetchedAt = now,
+            expiresAt = now.plusMillis(effectiveTtl.inWholeMilliseconds)
+        )
+    }
+
+    suspend fun has(key: String): Boolean = mutex.withLock {
+        val entry = entries[key] ?: return@withLock false
+        !entry.isExpired
+    }
+
+    suspend fun hasAny(key: String): Boolean = mutex.withLock {
+        entries.containsKey(key)
+    }
+
+    suspend fun keys(): Set<String> = mutex.withLock {
+        entries.keys.toSet()
+    }
+
+    suspend fun toMap(): Map<String, FlagState> = mutex.withLock {
+        entries.filter { !it.value.isExpired }
+            .mapValues { deserialize(it.value.data) }
+            .filterValues { it != null }
+            .mapValues { it.value!! }
+    }
+
+    suspend fun clear() = mutex.withLock {
+        entries.clear()
+        hitCount = 0
+        missCount = 0
+    }
+
+    suspend fun getStats(): CacheStats = mutex.withLock {
+        val now = java.time.Instant.now()
+        var validCount = 0
+        var staleCount = 0
+
+        entries.values.forEach { entry ->
+            if (now.isBefore(entry.expiresAt) || now == entry.expiresAt) {
+                validCount++
+            } else {
+                staleCount++
+            }
+        }
+
+        CacheStats(
+            size = entries.size,
+            validCount = validCount,
+            staleCount = staleCount,
+            maxSize = maxSize,
+            hitCount = hitCount,
+            missCount = missCount
+        )
+    }
+
+    private fun serialize(flagState: FlagState): String {
+        val jsonString = json.encodeToString(FlagState.serializer(), flagState)
+        return if (encryptionEnabled && encryptedStorage != null) {
+            encryptedStorage.encrypt(jsonString)
+        } else {
+            jsonString
+        }
+    }
+
+    private fun deserialize(data: String): FlagState? {
+        return try {
+            val jsonString = if (encryptionEnabled && encryptedStorage != null) {
+                encryptedStorage.decrypt(data)
+            } else {
+                data
+            }
+            json.decodeFromString(FlagState.serializer(), jsonString)
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    private fun evictIfNeeded() {
+        if (entries.size < maxSize) return
+
+        // First try to remove expired entries
+        entries.entries.removeIf { it.value.isExpired }
+        if (entries.size < maxSize) return
+
+        // LRU eviction - remove least recently accessed
+        val lruKey = entries.minByOrNull { it.value.lastAccessedAt }?.key
+        lruKey?.let { entries.remove(it) }
+    }
+}
 
 /**
  * The main FlagKit client for evaluating feature flags.
@@ -23,10 +202,11 @@ import java.time.Instant
  * This client provides:
  * - Flag evaluation with type-safe methods
  * - Context management for user targeting
- * - In-memory caching with TTL support
+ * - In-memory caching with TTL support (optionally encrypted with AES-256-GCM)
  * - Background polling for flag updates
  * - Event tracking for analytics
  * - Circuit breaker for resilience
+ * - PII detection and enforcement
  *
  * @param options Configuration options for the client.
  * @param scope Coroutine scope for background operations.
@@ -39,6 +219,9 @@ class FlagKitClient(
     private val contextManager = ContextManager()
     private var isReady = false
     private val readyDeferred = CompletableDeferred<Unit>()
+
+    // Internal logger for security warnings
+    private val logger: Logger = ClientLogger()
 
     private val circuitBreaker = CircuitBreaker(
         failureThreshold = options.circuitBreakerThreshold,
@@ -55,9 +238,12 @@ class FlagKitClient(
         enableRequestSigning = options.enableRequestSigning
     )
 
-    private val cache = Cache<FlagState>(
+    // Cache with optional encryption support
+    private val cache = EncryptingCache(
         ttl = options.cacheTtl,
-        maxSize = options.maxCacheSize
+        maxSize = options.maxCacheSize,
+        encryptionEnabled = options.enableCacheEncryption,
+        apiKey = options.apiKey
     )
 
     private val pollingManager = PollingManager(
@@ -120,8 +306,18 @@ class FlagKitClient(
      *
      * @param userId The unique user identifier.
      * @param attributes Optional additional attributes.
+     * @throws SecurityException if strictPiiMode is enabled and PII is detected in attributes.
      */
     suspend fun identify(userId: String, attributes: Map<String, Any?> = emptyMap()) {
+        // Enforce PII check on user attributes
+        if (attributes.isNotEmpty()) {
+            enforceNoPii(
+                data = attributes,
+                dataType = DataType.CONTEXT,
+                strictMode = options.strictPiiMode,
+                logger = if (!options.strictPiiMode) logger else null
+            )
+        }
         contextManager.identify(userId, attributes)
     }
 
@@ -152,8 +348,19 @@ class FlagKitClient(
      * Set the global evaluation context.
      *
      * @param context The context to set.
+     * @throws SecurityException if strictPiiMode is enabled and PII is detected in context attributes.
      */
     suspend fun setContext(context: EvaluationContext) {
+        // Enforce PII check on context attributes
+        val attributesMap = context.attributes.mapValues { it.value.toAny() }
+        if (attributesMap.isNotEmpty()) {
+            enforceNoPii(
+                data = attributesMap,
+                dataType = DataType.CONTEXT,
+                strictMode = options.strictPiiMode,
+                logger = if (!options.strictPiiMode) logger else null
+            )
+        }
         contextManager.setContext(context)
     }
 
@@ -416,9 +623,20 @@ class FlagKitClient(
      *
      * @param eventType The type of event.
      * @param data Optional event data.
+     * @throws SecurityException if strictPiiMode is enabled and PII is detected in event data.
      */
     suspend fun track(eventType: String, data: Map<String, Any?>? = null) {
         if (!options.eventsEnabled || eventQueue == null) return
+
+        // Enforce PII check on event data
+        if (data != null) {
+            enforceNoPii(
+                data = data,
+                dataType = DataType.EVENT,
+                strictMode = options.strictPiiMode,
+                logger = if (!options.strictPiiMode) logger else null
+            )
+        }
 
         val currentContext = getContext()
         val event = buildMap<String, Any?> {
@@ -458,6 +676,13 @@ class FlagKitClient(
      * @return True if the circuit is open (failing).
      */
     suspend fun isCircuitOpen() = circuitBreaker.isOpen()
+
+    /**
+     * Check if cache encryption is enabled.
+     *
+     * @return True if cache encryption is enabled.
+     */
+    fun isCacheEncryptionEnabled(): Boolean = options.enableCacheEncryption
 
     /**
      * Close the client and release resources.
