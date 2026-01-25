@@ -2,6 +2,8 @@ package dev.flagkit.http
 
 import dev.flagkit.error.ErrorCode
 import dev.flagkit.error.FlagKitException
+import dev.flagkit.utils.KeyRotationManager
+import dev.flagkit.utils.createRequestSignature
 import io.ktor.client.*
 import io.ktor.client.call.*
 import io.ktor.client.engine.cio.*
@@ -21,19 +23,23 @@ import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 /**
- * HTTP client with retry logic and circuit breaker integration.
+ * HTTP client with retry logic, circuit breaker integration, request signing, and key rotation.
  */
 class HttpClient(
     private val apiKey: String,
     private val timeout: Duration,
     private val retryAttempts: Int,
     private val circuitBreaker: CircuitBreaker,
-    private val localPort: Int? = null
+    private val localPort: Int? = null,
+    private val secondaryApiKey: String? = null,
+    private val enableRequestSigning: Boolean = true
 ) {
     private val json = Json {
         ignoreUnknownKeys = true
         isLenient = true
     }
+
+    private val keyRotationManager = KeyRotationManager(apiKey, secondaryApiKey)
 
     private val client = HttpClient(CIO) {
         install(ContentNegotiation) {
@@ -42,12 +48,6 @@ class HttpClient(
         install(HttpTimeout) {
             requestTimeoutMillis = timeout.inWholeMilliseconds
             connectTimeoutMillis = timeout.inWholeMilliseconds
-        }
-        defaultRequest {
-            contentType(ContentType.Application.Json)
-            accept(ContentType.Application.Json)
-            header("X-API-Key", apiKey)
-            header("User-Agent", "FlagKit-Kotlin/1.0.0")
         }
     }
 
@@ -79,6 +79,11 @@ class HttpClient(
                 circuitBreaker.recordSuccess()
                 return response
             } catch (e: FlagKitException) {
+                // Handle 401 with key rotation
+                if (e.errorCode == ErrorCode.AUTH_INVALID_KEY && keyRotationManager.handleAuthError()) {
+                    // Retry immediately with the secondary key
+                    continue
+                }
                 if (!e.isRecoverable) throw e
                 lastError = e
             } catch (e: Exception) {
@@ -102,10 +107,27 @@ class HttpClient(
         body: Map<String, Any?>?
     ): Map<String, Any?> {
         val baseUrl = getBaseUrl(localPort)
+        val currentApiKey = keyRotationManager.getCurrentKey()
+
         val response = client.request("${baseUrl}$path") {
             this.method = method
+            contentType(ContentType.Application.Json)
+            accept(ContentType.Application.Json)
+            header("X-API-Key", currentApiKey)
+            header("User-Agent", "FlagKit-Kotlin/1.0.0")
             params?.forEach { (key, value) -> parameter(key, value) }
-            body?.let { setBody(it) }
+
+            // Add request signing for POST requests
+            if (method == HttpMethod.Post && body != null && enableRequestSigning) {
+                val bodyJson = json.encodeToString(kotlinx.serialization.json.JsonElement.serializer(), convertToJsonElement(body))
+                val signature = createRequestSignature(bodyJson, currentApiKey)
+                header("X-Signature", signature.signature)
+                header("X-Timestamp", signature.timestamp.toString())
+                header("X-Key-Id", signature.keyId)
+                setBody(body)
+            } else {
+                body?.let { setBody(it) }
+            }
         }
 
         return parseResponse(response)
@@ -127,6 +149,18 @@ class HttpClient(
             in 500..599 -> throw FlagKitException.networkError("Server error: ${response.status.value}")
             else -> throw FlagKitException.networkError("Unexpected response status: ${response.status.value}")
         }
+    }
+
+    private fun convertToJsonElement(value: Any?): kotlinx.serialization.json.JsonElement = when (value) {
+        null -> kotlinx.serialization.json.JsonNull
+        is Boolean -> kotlinx.serialization.json.JsonPrimitive(value)
+        is Number -> kotlinx.serialization.json.JsonPrimitive(value)
+        is String -> kotlinx.serialization.json.JsonPrimitive(value)
+        is Map<*, *> -> kotlinx.serialization.json.JsonObject(value.entries.associate {
+            it.key.toString() to convertToJsonElement(it.value)
+        })
+        is List<*> -> kotlinx.serialization.json.JsonArray(value.map { convertToJsonElement(it) })
+        else -> kotlinx.serialization.json.JsonNull
     }
 
     private fun convertJsonElement(element: kotlinx.serialization.json.JsonElement): Any? {

@@ -2,6 +2,8 @@ package dev.flagkit
 
 import dev.flagkit.error.ErrorCode
 import dev.flagkit.error.FlagKitException
+import dev.flagkit.utils.SecurityConfig
+import dev.flagkit.utils.validateLocalPortRestriction
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 
@@ -23,7 +25,17 @@ data class FlagKitOptions(
     val circuitBreakerResetTimeout: Duration = DEFAULT_CIRCUIT_BREAKER_RESET_TIMEOUT,
     val bootstrap: Map<String, Any>? = null,
     val localPort: Int? = null,
-    val isLocal: Boolean = false
+    val isLocal: Boolean = false,
+    /** Secondary API key for automatic failover on 401 errors */
+    val secondaryApiKey: String? = null,
+    /** Enable strict PII mode - throws exception instead of warning */
+    val strictPiiMode: Boolean = false,
+    /** Enable request signing with HMAC-SHA256 for POST requests */
+    val enableRequestSigning: Boolean = true,
+    /** Enable cache encryption with AES-256-GCM */
+    val enableCacheEncryption: Boolean = false,
+    /** Security configuration options */
+    val securityConfig: SecurityConfig = SecurityConfig.DEFAULT
 ) {
     fun validate() {
         require(apiKey.isNotBlank()) {
@@ -45,6 +57,19 @@ data class FlagKitOptions(
         require(cacheTtl.isPositive()) {
             throw FlagKitException.configError(ErrorCode.CONFIG_INVALID_CACHE_TTL, "Cache TTL must be positive")
         }
+
+        // Validate localPort restriction in production
+        validateLocalPortRestriction(localPort)
+
+        // Validate secondary API key format if provided
+        if (secondaryApiKey != null) {
+            require(validPrefixes.any { secondaryApiKey.startsWith(it) }) {
+                throw FlagKitException.configError(
+                    ErrorCode.CONFIG_INVALID_API_KEY,
+                    "Invalid secondary API key format"
+                )
+            }
+        }
     }
 
     class Builder(private val apiKey: String) {
@@ -62,6 +87,11 @@ data class FlagKitOptions(
         private var bootstrap: Map<String, Any>? = null
         private var localPort: Int? = null
         private var isLocal = false
+        private var secondaryApiKey: String? = null
+        private var strictPiiMode = false
+        private var enableRequestSigning = true
+        private var enableCacheEncryption = false
+        private var securityConfig = SecurityConfig.DEFAULT
 
         fun pollingInterval(interval: Duration) = apply { this.pollingInterval = interval }
         fun cacheTtl(ttl: Duration) = apply { this.cacheTtl = ttl }
@@ -75,6 +105,11 @@ data class FlagKitOptions(
         fun bootstrap(data: Map<String, Any>) = apply { this.bootstrap = data }
         fun localPort(port: Int) = apply { this.localPort = port }
         fun isLocal(local: Boolean = true) = apply { this.isLocal = local }
+        fun secondaryApiKey(key: String) = apply { this.secondaryApiKey = key }
+        fun strictPiiMode(enabled: Boolean = true) = apply { this.strictPiiMode = enabled }
+        fun enableRequestSigning(enabled: Boolean = true) = apply { this.enableRequestSigning = enabled }
+        fun enableCacheEncryption(enabled: Boolean = true) = apply { this.enableCacheEncryption = enabled }
+        fun securityConfig(config: SecurityConfig) = apply { this.securityConfig = config }
 
         fun build() = FlagKitOptions(
             apiKey = apiKey,
@@ -91,7 +126,12 @@ data class FlagKitOptions(
             circuitBreakerResetTimeout = circuitBreakerResetTimeout,
             bootstrap = bootstrap,
             localPort = localPort,
-            isLocal = isLocal
+            isLocal = isLocal,
+            secondaryApiKey = secondaryApiKey,
+            strictPiiMode = strictPiiMode,
+            enableRequestSigning = enableRequestSigning,
+            enableCacheEncryption = enableCacheEncryption,
+            securityConfig = securityConfig
         )
     }
 

@@ -50,7 +50,9 @@ class FlagKitClient(
         timeout = options.timeout,
         retryAttempts = options.retryAttempts,
         circuitBreaker = circuitBreaker,
-        localPort = options.localPort
+        localPort = options.localPort,
+        secondaryApiKey = options.secondaryApiKey,
+        enableRequestSigning = options.enableRequestSigning
     )
 
     private val cache = Cache<FlagState>(

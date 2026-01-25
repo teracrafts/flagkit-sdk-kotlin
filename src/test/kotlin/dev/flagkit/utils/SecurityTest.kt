@@ -3,7 +3,11 @@ package dev.flagkit.utils
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotEquals
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.test.assertFailsWith
 
 class SecurityTest {
 
@@ -414,6 +418,10 @@ class SecurityTest {
         val config = SecurityConfig.DEFAULT
         assertTrue(config.warnOnServerKeyInBrowser)
         assertTrue(config.additionalPIIPatterns.isEmpty())
+        assertFalse(config.strictPiiMode)
+        assertNull(config.secondaryApiKey)
+        assertTrue(config.enableRequestSigning)
+        assertFalse(config.enableCacheEncryption)
     }
 
     @Test
@@ -421,11 +429,19 @@ class SecurityTest {
         val config = SecurityConfig(
             warnOnPotentialPII = false,
             warnOnServerKeyInBrowser = false,
-            additionalPIIPatterns = listOf("custom1", "custom2")
+            additionalPIIPatterns = listOf("custom1", "custom2"),
+            strictPiiMode = true,
+            secondaryApiKey = "sdk_secondary_key",
+            enableRequestSigning = false,
+            enableCacheEncryption = true
         )
         assertFalse(config.warnOnPotentialPII)
         assertFalse(config.warnOnServerKeyInBrowser)
         assertEquals(listOf("custom1", "custom2"), config.additionalPIIPatterns)
+        assertTrue(config.strictPiiMode)
+        assertEquals("sdk_secondary_key", config.secondaryApiKey)
+        assertFalse(config.enableRequestSigning)
+        assertTrue(config.enableCacheEncryption)
     }
 
     // ============= Edge cases =============
@@ -478,4 +494,504 @@ class SecurityTest {
         assertTrue(isPotentialPIIField("SOCIAL_SECURITY"))
         assertTrue(isPotentialPIIField("CreditCard"))
     }
+
+    // ============= Request Signing (HMAC-SHA256) tests =============
+
+    @Test
+    fun `getKeyId returns first 8 characters`() {
+        assertEquals("sdk_abc1", getKeyId("sdk_abc123def456"))
+        assertEquals("srv_xyz7", getKeyId("srv_xyz789"))
+    }
+
+    @Test
+    fun `getKeyId handles short keys`() {
+        assertEquals("sdk_", getKeyId("sdk_"))
+        assertEquals("ab", getKeyId("ab"))
+    }
+
+    @Test
+    fun `generateHmacSha256 generates consistent signatures`() {
+        val message = "test message"
+        val key = "secret-key"
+
+        val sig1 = generateHmacSha256(message, key)
+        val sig2 = generateHmacSha256(message, key)
+
+        assertEquals(sig1, sig2)
+        assertTrue(sig1.matches(Regex("^[a-f0-9]{64}$"))) // SHA256 = 64 hex chars
+    }
+
+    @Test
+    fun `generateHmacSha256 generates different signatures for different messages`() {
+        val key = "secret-key"
+
+        val sig1 = generateHmacSha256("message1", key)
+        val sig2 = generateHmacSha256("message2", key)
+
+        assertNotEquals(sig1, sig2)
+    }
+
+    @Test
+    fun `generateHmacSha256 generates different signatures for different keys`() {
+        val message = "test message"
+
+        val sig1 = generateHmacSha256(message, "key1")
+        val sig2 = generateHmacSha256(message, "key2")
+
+        assertNotEquals(sig1, sig2)
+    }
+
+    @Test
+    fun `createRequestSignature creates signature with all fields`() {
+        val body = """{"event":"test","value":123}"""
+        val apiKey = "sdk_abc123def456"
+
+        val signature = createRequestSignature(body, apiKey)
+
+        assertTrue(signature.signature.matches(Regex("^[a-f0-9]{64}$")))
+        assertTrue(signature.timestamp > 0)
+        assertEquals("sdk_abc1", signature.keyId)
+    }
+
+    @Test
+    fun `createRequestSignature uses provided timestamp`() {
+        val body = """{"test":true}"""
+        val apiKey = "sdk_test"
+        val timestamp = 1700000000000L
+
+        val signature = createRequestSignature(body, apiKey, timestamp)
+
+        assertEquals(timestamp, signature.timestamp)
+    }
+
+    @Test
+    fun `verifyRequestSignature verifies valid signature`() {
+        val body = """{"event":"test","value":123}"""
+        val apiKey = "sdk_abc123def456"
+
+        val signature = createRequestSignature(body, apiKey)
+        val isValid = verifyRequestSignature(
+            body,
+            signature.signature,
+            signature.timestamp,
+            signature.keyId,
+            apiKey
+        )
+
+        assertTrue(isValid)
+    }
+
+    @Test
+    fun `verifyRequestSignature rejects wrong key`() {
+        val body = """{"event":"test"}"""
+        val apiKey = "sdk_abc123def456"
+
+        val signature = createRequestSignature(body, apiKey)
+        val isValid = verifyRequestSignature(
+            body,
+            signature.signature,
+            signature.timestamp,
+            signature.keyId,
+            "sdk_different_key"
+        )
+
+        assertFalse(isValid)
+    }
+
+    @Test
+    fun `verifyRequestSignature rejects expired signature`() {
+        val body = """{"event":"test"}"""
+        val apiKey = "sdk_abc123def456"
+        val oldTimestamp = System.currentTimeMillis() - 600000 // 10 minutes ago
+
+        val signature = createRequestSignature(body, apiKey, oldTimestamp)
+        val isValid = verifyRequestSignature(
+            body,
+            signature.signature,
+            signature.timestamp,
+            signature.keyId,
+            apiKey,
+            maxAgeMs = 300000 // 5 min max age
+        )
+
+        assertFalse(isValid)
+    }
+
+    @Test
+    fun `verifyRequestSignature rejects modified body`() {
+        val body = """{"event":"test","value":123}"""
+        val apiKey = "sdk_abc123def456"
+
+        val signature = createRequestSignature(body, apiKey)
+        val modifiedBody = """{"event":"modified","value":999}"""
+        val isValid = verifyRequestSignature(
+            modifiedBody,
+            signature.signature,
+            signature.timestamp,
+            signature.keyId,
+            apiKey
+        )
+
+        assertFalse(isValid)
+    }
+
+    @Test
+    fun `verifyRequestSignature rejects mismatched keyId`() {
+        val body = """{"event":"test"}"""
+        val apiKey = "sdk_abc123def456"
+
+        val signature = createRequestSignature(body, apiKey)
+        val isValid = verifyRequestSignature(
+            body,
+            signature.signature,
+            signature.timestamp,
+            "sdk_diff", // Different key ID
+            apiKey
+        )
+
+        assertFalse(isValid)
+    }
+
+    // ============= Key Rotation tests =============
+
+    @Test
+    fun `KeyRotationManager returns primary key by default`() {
+        val manager = KeyRotationManager("sdk_primary", "sdk_secondary")
+
+        assertEquals("sdk_primary", manager.getCurrentKey())
+        assertFalse(manager.isUsingSecondary())
+    }
+
+    @Test
+    fun `KeyRotationManager fails over to secondary on auth error`() {
+        val manager = KeyRotationManager("sdk_primary", "sdk_secondary")
+
+        assertTrue(manager.handleAuthError())
+        assertEquals("sdk_secondary", manager.getCurrentKey())
+        assertTrue(manager.isUsingSecondary())
+    }
+
+    @Test
+    fun `KeyRotationManager returns false when no secondary key`() {
+        val manager = KeyRotationManager("sdk_primary", null)
+
+        assertFalse(manager.handleAuthError())
+        assertEquals("sdk_primary", manager.getCurrentKey())
+        assertFalse(manager.hasSecondaryKey())
+    }
+
+    @Test
+    fun `KeyRotationManager returns false when already using secondary`() {
+        val manager = KeyRotationManager("sdk_primary", "sdk_secondary")
+
+        assertTrue(manager.handleAuthError()) // First failover
+        assertFalse(manager.handleAuthError()) // Already on secondary
+        assertEquals("sdk_secondary", manager.getCurrentKey())
+    }
+
+    @Test
+    fun `KeyRotationManager reset returns to primary`() {
+        val manager = KeyRotationManager("sdk_primary", "sdk_secondary")
+
+        manager.handleAuthError()
+        assertTrue(manager.isUsingSecondary())
+
+        manager.reset()
+        assertFalse(manager.isUsingSecondary())
+        assertEquals("sdk_primary", manager.getCurrentKey())
+    }
+
+    @Test
+    fun `KeyRotationManager updatePrimaryKey updates and resets`() {
+        val manager = KeyRotationManager("sdk_primary", "sdk_secondary")
+
+        manager.handleAuthError()
+        manager.updatePrimaryKey("sdk_new_primary")
+
+        assertFalse(manager.isUsingSecondary())
+        assertEquals("sdk_new_primary", manager.getCurrentKey())
+    }
+
+    // ============= Strict PII Mode tests =============
+
+    @Test
+    fun `checkForPotentialPii returns hasPii false for no PII`() {
+        val data = mapOf("userId" to "123", "plan" to "premium")
+        val result = checkForPotentialPii(data, DataType.CONTEXT)
+
+        assertFalse(result.hasPii)
+        assertTrue(result.fields.isEmpty())
+        assertEquals("", result.message)
+    }
+
+    @Test
+    fun `checkForPotentialPii returns hasPii true for PII`() {
+        val data = mapOf("email" to "test@example.com", "phone" to "555-1234")
+        val result = checkForPotentialPii(data, DataType.CONTEXT)
+
+        assertTrue(result.hasPii)
+        assertEquals(2, result.fields.size)
+        assertTrue(result.fields.contains("email"))
+        assertTrue(result.fields.contains("phone"))
+        assertTrue(result.message.contains("Potential PII detected"))
+    }
+
+    @Test
+    fun `checkForPotentialPii respects privateAttributes`() {
+        val data = mapOf("email" to "test@example.com", "phone" to "555-1234")
+        val result = checkForPotentialPii(
+            data,
+            DataType.CONTEXT,
+            privateAttributes = setOf("email")
+        )
+
+        assertTrue(result.hasPii)
+        assertEquals(1, result.fields.size)
+        assertTrue(result.fields.contains("phone"))
+        assertFalse(result.fields.contains("email"))
+    }
+
+    @Test
+    fun `checkForPotentialPii returns false when all PII in privateAttributes`() {
+        val data = mapOf("email" to "test@example.com")
+        val result = checkForPotentialPii(
+            data,
+            DataType.CONTEXT,
+            privateAttributes = setOf("email")
+        )
+
+        assertFalse(result.hasPii)
+        assertTrue(result.fields.isEmpty())
+    }
+
+    @Test
+    fun `enforceNoPii warns in non-strict mode`() {
+        val logger = TestLogger()
+        val data = mapOf("email" to "test@example.com")
+
+        enforceNoPii(data, DataType.CONTEXT, strictMode = false, logger = logger)
+
+        assertEquals(1, logger.warnings.size)
+        assertTrue(logger.warnings[0].contains("Potential PII"))
+    }
+
+    @Test
+    fun `enforceNoPii throws in strict mode`() {
+        val data = mapOf("email" to "test@example.com")
+
+        val exception = assertFailsWith<SecurityException> {
+            enforceNoPii(data, DataType.CONTEXT, strictMode = true)
+        }
+
+        assertTrue(exception.message!!.contains("PII detected"))
+        assertTrue(exception.message!!.contains("strict PII mode"))
+    }
+
+    @Test
+    fun `enforceNoPii does not throw for safe data in strict mode`() {
+        val data = mapOf("userId" to "123")
+
+        // Should not throw
+        enforceNoPii(data, DataType.CONTEXT, strictMode = true)
+    }
+
+    @Test
+    fun `enforceNoPii respects privateAttributes in strict mode`() {
+        val data = mapOf("email" to "test@example.com")
+
+        // Should not throw when email is in privateAttributes
+        enforceNoPii(
+            data,
+            DataType.CONTEXT,
+            strictMode = true,
+            privateAttributes = setOf("email")
+        )
+    }
+
+    // ============= Cache Encryption tests =============
+
+    @Test
+    fun `EncryptedStorage encrypts and decrypts correctly`() {
+        val storage = EncryptedStorage("sdk_test_api_key")
+        val plaintext = """{"flagKey":"test","value":true}"""
+
+        val encrypted = storage.encrypt(plaintext)
+        val decrypted = storage.decrypt(encrypted)
+
+        assertEquals(plaintext, decrypted)
+        assertNotEquals(plaintext, encrypted)
+    }
+
+    @Test
+    fun `EncryptedStorage generates different ciphertext for same plaintext`() {
+        val storage = EncryptedStorage("sdk_test_api_key")
+        val plaintext = "test data"
+
+        val encrypted1 = storage.encrypt(plaintext)
+        val encrypted2 = storage.encrypt(plaintext)
+
+        // Different IVs should produce different ciphertext
+        assertNotEquals(encrypted1, encrypted2)
+
+        // But both should decrypt to the same value
+        assertEquals(plaintext, storage.decrypt(encrypted1))
+        assertEquals(plaintext, storage.decrypt(encrypted2))
+    }
+
+    @Test
+    fun `EncryptedStorage with same salt produces same key`() {
+        val apiKey = "sdk_test_api_key"
+        val salt = EncryptedStorage.generateSalt()
+
+        val storage1 = EncryptedStorage(apiKey, salt)
+        val storage2 = EncryptedStorage(apiKey, salt)
+
+        val plaintext = "test data"
+        val encrypted = storage1.encrypt(plaintext)
+        val decrypted = storage2.decrypt(encrypted)
+
+        assertEquals(plaintext, decrypted)
+    }
+
+    @Test
+    fun `EncryptedStorage withSalt factory works correctly`() {
+        val apiKey = "sdk_test_api_key"
+        val storage1 = EncryptedStorage(apiKey)
+        val saltBase64 = storage1.getSaltBase64()
+
+        val plaintext = "test data"
+        val encrypted = storage1.encrypt(plaintext)
+
+        // Recreate storage with saved salt
+        val storage2 = EncryptedStorage.withSalt(apiKey, saltBase64)
+        val decrypted = storage2.decrypt(encrypted)
+
+        assertEquals(plaintext, decrypted)
+    }
+
+    @Test
+    fun `EncryptedStorage throws on invalid data`() {
+        val storage = EncryptedStorage("sdk_test_api_key")
+
+        assertFailsWith<SecurityException> {
+            storage.decrypt("invalid_base64_data!!!")
+        }
+    }
+
+    @Test
+    fun `EncryptedStorage throws on tampered data`() {
+        val storage = EncryptedStorage("sdk_test_api_key")
+        val plaintext = "test data"
+        val encrypted = storage.encrypt(plaintext)
+
+        // Tamper with the encrypted data
+        val tamperedBytes = java.util.Base64.getDecoder().decode(encrypted)
+        tamperedBytes[tamperedBytes.size - 1] = (tamperedBytes[tamperedBytes.size - 1].toInt() xor 0xFF).toByte()
+        val tampered = java.util.Base64.getEncoder().encodeToString(tamperedBytes)
+
+        assertFailsWith<SecurityException> {
+            storage.decrypt(tampered)
+        }
+    }
+
+    @Test
+    fun `EncryptedCache set and get work correctly`() {
+        val storage = EncryptedStorage("sdk_test_api_key")
+        val cache = EncryptedCache<String>(
+            storage = storage,
+            serializer = { it },
+            deserializer = { it }
+        )
+
+        cache.set("key1", "value1")
+        cache.set("key2", "value2")
+
+        assertEquals("value1", cache.get("key1"))
+        assertEquals("value2", cache.get("key2"))
+        assertNull(cache.get("nonexistent"))
+    }
+
+    @Test
+    fun `EncryptedCache has and remove work correctly`() {
+        val storage = EncryptedStorage("sdk_test_api_key")
+        val cache = EncryptedCache<String>(
+            storage = storage,
+            serializer = { it },
+            deserializer = { it }
+        )
+
+        cache.set("key1", "value1")
+
+        assertTrue(cache.has("key1"))
+        assertFalse(cache.has("key2"))
+
+        assertTrue(cache.remove("key1"))
+        assertFalse(cache.has("key1"))
+        assertFalse(cache.remove("key1"))
+    }
+
+    @Test
+    fun `EncryptedCache clear and keys work correctly`() {
+        val storage = EncryptedStorage("sdk_test_api_key")
+        val cache = EncryptedCache<String>(
+            storage = storage,
+            serializer = { it },
+            deserializer = { it }
+        )
+
+        cache.set("key1", "value1")
+        cache.set("key2", "value2")
+
+        assertEquals(setOf("key1", "key2"), cache.keys())
+        assertEquals(2, cache.size())
+
+        cache.clear()
+
+        assertEquals(emptySet<String>(), cache.keys())
+        assertEquals(0, cache.size())
+    }
+
+    @Test
+    fun `EncryptedCache export and import work correctly`() {
+        val storage = EncryptedStorage("sdk_test_api_key")
+        val cache1 = EncryptedCache<String>(
+            storage = storage,
+            serializer = { it },
+            deserializer = { it }
+        )
+
+        cache1.set("key1", "value1")
+        cache1.set("key2", "value2")
+
+        val exported = cache1.exportEncrypted()
+
+        val cache2 = EncryptedCache<String>(
+            storage = storage,
+            serializer = { it },
+            deserializer = { it }
+        )
+        cache2.importEncrypted(exported)
+
+        assertEquals("value1", cache2.get("key1"))
+        assertEquals("value2", cache2.get("key2"))
+    }
+
+    // ============= LocalPort Restriction tests =============
+
+    @Test
+    fun `validateLocalPortRestriction does not throw when localPort is null`() {
+        // Should not throw
+        validateLocalPortRestriction(null)
+    }
+
+    @Test
+    fun `validateLocalPortRestriction does not throw in non-production`() {
+        // APP_ENV is not set to production in test environment
+        // Should not throw
+        validateLocalPortRestriction(3000)
+    }
+
+    // Note: Testing production restriction requires setting APP_ENV environment variable
+    // which is not easily done in unit tests. The actual production check is tested
+    // through integration tests or manual testing.
 }
