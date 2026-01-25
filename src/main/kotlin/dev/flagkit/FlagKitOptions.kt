@@ -35,7 +35,15 @@ data class FlagKitOptions(
     /** Enable cache encryption with AES-256-GCM */
     val enableCacheEncryption: Boolean = false,
     /** Security configuration options */
-    val securityConfig: SecurityConfig = SecurityConfig.DEFAULT
+    val securityConfig: SecurityConfig = SecurityConfig.DEFAULT,
+    /** Enable crash-resilient event persistence to disk */
+    val persistEvents: Boolean = false,
+    /** Directory path for event storage files (defaults to system temp dir) */
+    val eventStoragePath: String? = null,
+    /** Maximum number of events to persist */
+    val maxPersistedEvents: Int = DEFAULT_MAX_PERSISTED_EVENTS,
+    /** Milliseconds between persistence flush operations */
+    val persistenceFlushIntervalMs: Long = DEFAULT_PERSISTENCE_FLUSH_INTERVAL_MS
 ) {
     fun validate() {
         require(apiKey.isNotBlank()) {
@@ -92,6 +100,10 @@ data class FlagKitOptions(
         private var enableRequestSigning = true
         private var enableCacheEncryption = false
         private var securityConfig = SecurityConfig.DEFAULT
+        private var persistEvents = false
+        private var eventStoragePath: String? = null
+        private var maxPersistedEvents = DEFAULT_MAX_PERSISTED_EVENTS
+        private var persistenceFlushIntervalMs = DEFAULT_PERSISTENCE_FLUSH_INTERVAL_MS
 
         fun pollingInterval(interval: Duration) = apply { this.pollingInterval = interval }
         fun cacheTtl(ttl: Duration) = apply { this.cacheTtl = ttl }
@@ -110,6 +122,10 @@ data class FlagKitOptions(
         fun enableRequestSigning(enabled: Boolean = true) = apply { this.enableRequestSigning = enabled }
         fun enableCacheEncryption(enabled: Boolean = true) = apply { this.enableCacheEncryption = enabled }
         fun securityConfig(config: SecurityConfig) = apply { this.securityConfig = config }
+        fun persistEvents(enabled: Boolean = true) = apply { this.persistEvents = enabled }
+        fun eventStoragePath(path: String) = apply { this.eventStoragePath = path }
+        fun maxPersistedEvents(max: Int) = apply { this.maxPersistedEvents = max }
+        fun persistenceFlushIntervalMs(intervalMs: Long) = apply { this.persistenceFlushIntervalMs = intervalMs }
 
         fun build() = FlagKitOptions(
             apiKey = apiKey,
@@ -131,7 +147,11 @@ data class FlagKitOptions(
             strictPiiMode = strictPiiMode,
             enableRequestSigning = enableRequestSigning,
             enableCacheEncryption = enableCacheEncryption,
-            securityConfig = securityConfig
+            securityConfig = securityConfig,
+            persistEvents = persistEvents,
+            eventStoragePath = eventStoragePath,
+            maxPersistedEvents = maxPersistedEvents,
+            persistenceFlushIntervalMs = persistenceFlushIntervalMs
         )
     }
 
@@ -145,6 +165,8 @@ data class FlagKitOptions(
         const val DEFAULT_RETRY_ATTEMPTS = 3
         const val DEFAULT_CIRCUIT_BREAKER_THRESHOLD = 5
         val DEFAULT_CIRCUIT_BREAKER_RESET_TIMEOUT = 30.seconds
+        const val DEFAULT_MAX_PERSISTED_EVENTS = 10000
+        const val DEFAULT_PERSISTENCE_FLUSH_INTERVAL_MS = 1000L
 
         fun builder(apiKey: String) = Builder(apiKey)
     }
