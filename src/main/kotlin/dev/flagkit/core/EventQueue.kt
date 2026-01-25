@@ -119,7 +119,8 @@ class EventQueue(
     private val flushInterval: Duration = EventQueueConfig.DEFAULT_FLUSH_INTERVAL,
     private val onFlush: suspend (List<Map<String, Any?>>) -> Unit,
     private val scope: CoroutineScope = CoroutineScope(Dispatchers.Default + SupervisorJob()),
-    private val config: EventQueueConfig = EventQueueConfig(batchSize = batchSize, flushInterval = flushInterval)
+    private val config: EventQueueConfig = EventQueueConfig(batchSize = batchSize, flushInterval = flushInterval),
+    private val eventPersistence: EventPersistence? = null
 ) {
     private val mutex = Mutex()
     private val queue = mutableListOf<Event>()
@@ -132,12 +133,28 @@ class EventQueue(
     /**
      * Start the event queue background processing.
      */
-    suspend fun start() = mutex.withLock {
-        if (isRunning) return@withLock
+    suspend fun start() {
+        // Start persistence layer if enabled
+        eventPersistence?.start()
 
-        isRunning = true
-        job = scope.launch {
-            flushLoop()
+        // Recover any pending events from previous runs
+        eventPersistence?.let { persistence ->
+            val recoveredEvents = persistence.recover()
+            if (recoveredEvents.isNotEmpty()) {
+                mutex.withLock {
+                    // Add recovered events at the beginning of the queue (priority)
+                    queue.addAll(0, recoveredEvents)
+                }
+            }
+        }
+
+        mutex.withLock {
+            if (isRunning) return@withLock
+
+            isRunning = true
+            job = scope.launch {
+                flushLoop()
+            }
         }
     }
 
@@ -151,6 +168,9 @@ class EventQueue(
         job?.cancelAndJoin()
         job = null
         flush()
+
+        // Close persistence layer
+        eventPersistence?.close()
     }
 
     /**
@@ -229,9 +249,23 @@ class EventQueue(
             copy
         }
 
+        // Get event IDs for persistence tracking
+        val eventIds = eventPersistence?.getEventIds(events) ?: emptyMap()
+
+        // Mark events as sending in persistence layer
+        if (eventIds.isNotEmpty()) {
+            eventPersistence?.markSending(eventIds.values.toList())
+        }
+
         try {
             val eventMaps = events.map { it.toMap() }
             onFlush(eventMaps)
+
+            // Mark events as sent in persistence layer
+            if (eventIds.isNotEmpty()) {
+                eventPersistence?.markSent(eventIds.values.toList())
+            }
+
             mutex.withLock {
                 flushCount++
             }
@@ -239,6 +273,12 @@ class EventQueue(
             mutex.withLock {
                 errorCount++
             }
+
+            // Revert to pending in persistence layer
+            if (eventIds.isNotEmpty()) {
+                eventPersistence?.markPending(eventIds.values.toList())
+            }
+
             // Re-queue events on failure (up to max size)
             requeue(events)
             throw FlagKitException(ErrorCode.EVENT_FLUSH_FAILED, "Failed to flush events: ${e.message}", e)
@@ -308,6 +348,9 @@ class EventQueue(
      * Add an event to the queue.
      */
     private suspend fun addToQueue(event: Event) {
+        // Persist event BEFORE adding to queue (crash-safe)
+        eventPersistence?.persist(event)
+
         val shouldFlush = mutex.withLock {
             eventCount++
 
@@ -384,14 +427,16 @@ class EventQueue(
         fun create(
             config: EventQueueConfig,
             onFlush: suspend (List<Map<String, Any?>>) -> Unit,
-            scope: CoroutineScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+            scope: CoroutineScope = CoroutineScope(Dispatchers.Default + SupervisorJob()),
+            eventPersistence: EventPersistence? = null
         ): EventQueue {
             return EventQueue(
                 batchSize = config.batchSize,
                 flushInterval = config.flushInterval,
                 onFlush = onFlush,
                 scope = scope,
-                config = config
+                config = config,
+                eventPersistence = eventPersistence
             )
         }
     }
