@@ -24,6 +24,42 @@ data class EvaluationJitterConfig(
 )
 
 /**
+ * Configuration for bootstrap flag values with optional HMAC-SHA256 signature verification.
+ *
+ * This allows pre-loading flag values at initialization time with cryptographic verification
+ * to ensure the bootstrap data has not been tampered with.
+ *
+ * @param flags Map of flag configurations to bootstrap.
+ * @param signature Optional HMAC-SHA256 signature of the canonicalized flags data.
+ * @param timestamp Optional timestamp (in milliseconds) when the bootstrap data was generated.
+ */
+data class BootstrapConfig(
+    val flags: Map<String, Any?>,
+    val signature: String? = null,
+    val timestamp: Long? = null
+)
+
+/**
+ * Configuration for bootstrap signature verification behavior.
+ *
+ * @param enabled Whether signature verification is enabled. Defaults to true.
+ * @param maxAge Maximum age of bootstrap data in milliseconds. Defaults to 24 hours.
+ * @param onFailure Behavior when verification fails: "warn" (log warning and continue),
+ *                  "error" (throw exception), or "ignore" (skip bootstrap silently).
+ */
+data class BootstrapVerificationConfig(
+    val enabled: Boolean = true,
+    val maxAge: Long = 86400000L, // 24 hours in milliseconds
+    val onFailure: String = "warn" // "warn", "error", "ignore"
+) {
+    init {
+        require(onFailure in listOf("warn", "error", "ignore")) {
+            "onFailure must be one of: warn, error, ignore"
+        }
+    }
+}
+
+/**
  * Configuration options for the FlagKit SDK.
  */
 data class FlagKitOptions(
@@ -40,6 +76,10 @@ data class FlagKitOptions(
     val circuitBreakerThreshold: Int = DEFAULT_CIRCUIT_BREAKER_THRESHOLD,
     val circuitBreakerResetTimeout: Duration = DEFAULT_CIRCUIT_BREAKER_RESET_TIMEOUT,
     val bootstrap: Map<String, Any>? = null,
+    /** Bootstrap configuration with signature verification support */
+    val bootstrapConfig: BootstrapConfig? = null,
+    /** Bootstrap verification settings */
+    val bootstrapVerification: BootstrapVerificationConfig = BootstrapVerificationConfig(),
     val localPort: Int? = null,
     val isLocal: Boolean = false,
     /** Secondary API key for automatic failover on 401 errors */
@@ -111,6 +151,8 @@ data class FlagKitOptions(
         private var circuitBreakerThreshold = DEFAULT_CIRCUIT_BREAKER_THRESHOLD
         private var circuitBreakerResetTimeout = DEFAULT_CIRCUIT_BREAKER_RESET_TIMEOUT
         private var bootstrap: Map<String, Any>? = null
+        private var bootstrapConfig: BootstrapConfig? = null
+        private var bootstrapVerification = BootstrapVerificationConfig()
         private var localPort: Int? = null
         private var isLocal = false
         private var secondaryApiKey: String? = null
@@ -134,6 +176,8 @@ data class FlagKitOptions(
         fun timeout(timeout: Duration) = apply { this.timeout = timeout }
         fun retryAttempts(attempts: Int) = apply { this.retryAttempts = attempts }
         fun bootstrap(data: Map<String, Any>) = apply { this.bootstrap = data }
+        fun bootstrapConfig(config: BootstrapConfig) = apply { this.bootstrapConfig = config }
+        fun bootstrapVerification(config: BootstrapVerificationConfig) = apply { this.bootstrapVerification = config }
         fun localPort(port: Int) = apply { this.localPort = port }
         fun isLocal(local: Boolean = true) = apply { this.isLocal = local }
         fun secondaryApiKey(key: String) = apply { this.secondaryApiKey = key }
@@ -161,6 +205,8 @@ data class FlagKitOptions(
             circuitBreakerThreshold = circuitBreakerThreshold,
             circuitBreakerResetTimeout = circuitBreakerResetTimeout,
             bootstrap = bootstrap,
+            bootstrapConfig = bootstrapConfig,
+            bootstrapVerification = bootstrapVerification,
             localPort = localPort,
             isLocal = isLocal,
             secondaryApiKey = secondaryApiKey,

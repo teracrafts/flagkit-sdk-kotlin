@@ -413,6 +413,195 @@ fun verifyRequestSignature(
     return signature == expectedSignature
 }
 
+// ============= Bootstrap Signature Verification =============
+
+/**
+ * Result of bootstrap signature verification.
+ *
+ * @param valid Whether the signature verification passed.
+ * @param errorMessage Error message if verification failed, null otherwise.
+ */
+data class BootstrapVerificationResult(
+    val valid: Boolean,
+    val errorMessage: String?
+)
+
+/**
+ * Canonicalize an object to a deterministic JSON string for signature verification.
+ *
+ * This function ensures consistent ordering of keys and formatting to produce
+ * the same output regardless of the original key ordering in the input map.
+ *
+ * @param obj The object to canonicalize.
+ * @return A deterministic JSON string representation.
+ */
+fun canonicalizeObject(obj: Map<String, Any?>): String {
+    return buildCanonicalString(obj)
+}
+
+/**
+ * Internal function to recursively build canonical JSON string.
+ */
+private fun buildCanonicalString(value: Any?): String {
+    return when (value) {
+        null -> "null"
+        is Boolean -> value.toString()
+        is Number -> {
+            // Handle floating point numbers - remove trailing zeros
+            when {
+                value is Double || value is Float -> {
+                    val d = value.toDouble()
+                    if (d == d.toLong().toDouble()) {
+                        d.toLong().toString()
+                    } else {
+                        d.toString()
+                    }
+                }
+                else -> value.toString()
+            }
+        }
+        is String -> "\"${escapeJsonString(value)}\""
+        is Map<*, *> -> {
+            @Suppress("UNCHECKED_CAST")
+            val map = value as Map<String, Any?>
+            val sortedEntries = map.entries.sortedBy { it.key }
+            val pairs = sortedEntries.map { (k, v) ->
+                "\"${escapeJsonString(k)}\":${buildCanonicalString(v)}"
+            }
+            "{${pairs.joinToString(",")}}"
+        }
+        is List<*> -> {
+            val items = value.map { buildCanonicalString(it) }
+            "[${items.joinToString(",")}]"
+        }
+        is Array<*> -> {
+            val items = value.map { buildCanonicalString(it) }
+            "[${items.joinToString(",")}]"
+        }
+        else -> "\"${escapeJsonString(value.toString())}\""
+    }
+}
+
+/**
+ * Escape special characters in a JSON string.
+ */
+private fun escapeJsonString(str: String): String {
+    val sb = StringBuilder()
+    for (c in str) {
+        when (c) {
+            '"' -> sb.append("\\\"")
+            '\\' -> sb.append("\\\\")
+            '\b' -> sb.append("\\b")
+            '\u000C' -> sb.append("\\f")
+            '\n' -> sb.append("\\n")
+            '\r' -> sb.append("\\r")
+            '\t' -> sb.append("\\t")
+            else -> {
+                if (c.code < 0x20) {
+                    sb.append("\\u${c.code.toString(16).padStart(4, '0')}")
+                } else {
+                    sb.append(c)
+                }
+            }
+        }
+    }
+    return sb.toString()
+}
+
+/**
+ * Verify a bootstrap signature using HMAC-SHA256.
+ *
+ * This function verifies that:
+ * 1. The signature matches the HMAC-SHA256 of the canonicalized flags data
+ * 2. The timestamp (if provided) is not older than the configured maxAge
+ *
+ * Uses constant-time comparison to prevent timing attacks.
+ *
+ * @param flags The bootstrap flags data.
+ * @param signature The HMAC-SHA256 signature to verify.
+ * @param timestamp Optional timestamp when the bootstrap was generated.
+ * @param apiKey The API key to use for HMAC computation.
+ * @param maxAge Maximum age of the bootstrap data in milliseconds.
+ * @param verificationEnabled Whether verification is enabled.
+ * @return BootstrapVerificationResult indicating success or failure with message.
+ */
+fun verifyBootstrapSignature(
+    flags: Map<String, Any?>,
+    signature: String?,
+    timestamp: Long?,
+    apiKey: String,
+    maxAge: Long,
+    verificationEnabled: Boolean = true
+): BootstrapVerificationResult {
+    // If verification is disabled, always pass
+    if (!verificationEnabled) {
+        return BootstrapVerificationResult(valid = true, errorMessage = null)
+    }
+
+    // If no signature provided, verification cannot proceed
+    if (signature == null) {
+        return BootstrapVerificationResult(
+            valid = false,
+            errorMessage = "Bootstrap signature is missing"
+        )
+    }
+
+    // Check timestamp expiration if provided
+    if (timestamp != null) {
+        val now = System.currentTimeMillis()
+        val age = now - timestamp
+
+        if (age > maxAge) {
+            return BootstrapVerificationResult(
+                valid = false,
+                errorMessage = "Bootstrap data has expired (age: ${age}ms, maxAge: ${maxAge}ms)"
+            )
+        }
+
+        if (age < 0) {
+            return BootstrapVerificationResult(
+                valid = false,
+                errorMessage = "Bootstrap timestamp is in the future"
+            )
+        }
+    }
+
+    // Canonicalize the flags data
+    val canonicalData = canonicalizeObject(flags)
+
+    // Generate expected signature
+    val expectedSignature = generateHmacSha256(canonicalData, apiKey)
+
+    // Constant-time comparison to prevent timing attacks
+    val signatureBytes = signature.toByteArray(Charsets.UTF_8)
+    val expectedBytes = expectedSignature.toByteArray(Charsets.UTF_8)
+
+    val isValid = java.security.MessageDigest.isEqual(signatureBytes, expectedBytes)
+
+    return if (isValid) {
+        BootstrapVerificationResult(valid = true, errorMessage = null)
+    } else {
+        BootstrapVerificationResult(
+            valid = false,
+            errorMessage = "Bootstrap signature verification failed"
+        )
+    }
+}
+
+/**
+ * Generate a signature for bootstrap data.
+ *
+ * This is a utility function for creating signed bootstrap configurations.
+ *
+ * @param flags The flags data to sign.
+ * @param apiKey The API key to use for signing.
+ * @return The HMAC-SHA256 signature as a hex string.
+ */
+fun generateBootstrapSignature(flags: Map<String, Any?>, apiKey: String): String {
+    val canonicalData = canonicalizeObject(flags)
+    return generateHmacSha256(canonicalData, apiKey)
+}
+
 // ============= LocalPort Restriction =============
 
 /**

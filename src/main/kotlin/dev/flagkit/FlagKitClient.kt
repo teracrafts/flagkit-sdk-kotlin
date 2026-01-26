@@ -17,6 +17,7 @@ import dev.flagkit.utils.EncryptedStorage
 import dev.flagkit.utils.Logger
 import dev.flagkit.utils.SecurityException
 import dev.flagkit.utils.enforceNoPii
+import dev.flagkit.utils.verifyBootstrapSignature
 import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -268,13 +269,19 @@ class FlagKitClient(
      * Initialize the client.
      *
      * This method:
-     * 1. Loads bootstrap data if provided
+     * 1. Loads bootstrap data if provided (with optional signature verification)
      * 2. Fetches initial flags from the server
      * 3. Starts background polling and event queue
      * 4. Marks the client as ready
      */
     suspend fun initialize() {
-        options.bootstrap?.let { loadBootstrap(it) }
+        // Load bootstrap from BootstrapConfig if provided (with verification)
+        if (options.bootstrapConfig != null) {
+            loadBootstrapConfig(options.bootstrapConfig)
+        } else {
+            // Fall back to legacy bootstrap format
+            options.bootstrap?.let { loadBootstrap(it) }
+        }
 
         try {
             fetchInitialFlags()
@@ -725,6 +732,59 @@ class FlagKitClient(
         readyDeferred.complete(Unit)
     }
 
+    /**
+     * Load bootstrap data from BootstrapConfig with optional signature verification.
+     */
+    @Suppress("UNCHECKED_CAST")
+    private suspend fun loadBootstrapConfig(config: BootstrapConfig) {
+        val verificationConfig = options.bootstrapVerification
+
+        // Verify signature if present and verification is enabled
+        if (config.signature != null && verificationConfig.enabled) {
+            val result = verifyBootstrapSignature(
+                flags = config.flags,
+                signature = config.signature,
+                timestamp = config.timestamp,
+                apiKey = options.apiKey,
+                maxAge = verificationConfig.maxAge,
+                verificationEnabled = true
+            )
+
+            if (!result.valid) {
+                when (verificationConfig.onFailure) {
+                    "error" -> throw SecurityException(
+                        "Bootstrap verification failed: ${result.errorMessage}"
+                    )
+                    "warn" -> {
+                        logger.warn(
+                            "[FlagKit Security] Bootstrap verification failed: ${result.errorMessage}. " +
+                            "Proceeding with unverified bootstrap data."
+                        )
+                    }
+                    "ignore" -> {
+                        // Silently skip loading bootstrap
+                        return
+                    }
+                }
+            }
+        }
+
+        // Load the flags
+        val flags = config.flags["flags"] as? List<Map<String, Any?>> ?: return
+
+        flags.forEach { flagData ->
+            try {
+                val flagState = decodeFlagState(flagData)
+                cache.set(flagState.key, flagState)
+            } catch (e: Exception) {
+                // Skip invalid flags
+            }
+        }
+    }
+
+    /**
+     * Load bootstrap data from legacy Map format (no verification).
+     */
     @Suppress("UNCHECKED_CAST")
     private suspend fun loadBootstrap(bootstrap: Map<String, Any>) {
         val flags = bootstrap["flags"] as? List<Map<String, Any?>> ?: return
