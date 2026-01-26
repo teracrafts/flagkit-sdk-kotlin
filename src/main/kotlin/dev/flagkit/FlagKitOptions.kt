@@ -1,6 +1,7 @@
 package dev.flagkit
 
 import dev.flagkit.error.ErrorCode
+import dev.flagkit.error.ErrorSanitizationConfig
 import dev.flagkit.error.FlagKitException
 import dev.flagkit.utils.SecurityConfig
 import dev.flagkit.utils.validateLocalPortRestriction
@@ -101,7 +102,9 @@ data class FlagKitOptions(
     /** Milliseconds between persistence flush operations */
     val persistenceFlushIntervalMs: Long = DEFAULT_PERSISTENCE_FLUSH_INTERVAL_MS,
     /** Evaluation jitter configuration for timing attack protection */
-    val evaluationJitter: EvaluationJitterConfig = EvaluationJitterConfig()
+    val evaluationJitter: EvaluationJitterConfig = EvaluationJitterConfig(),
+    /** Error message sanitization configuration to prevent information leakage */
+    val errorSanitization: ErrorSanitizationConfig = ErrorSanitizationConfig()
 ) {
     fun validate() {
         require(apiKey.isNotBlank()) {
@@ -165,6 +168,7 @@ data class FlagKitOptions(
         private var maxPersistedEvents = DEFAULT_MAX_PERSISTED_EVENTS
         private var persistenceFlushIntervalMs = DEFAULT_PERSISTENCE_FLUSH_INTERVAL_MS
         private var evaluationJitter = EvaluationJitterConfig()
+        private var errorSanitization = ErrorSanitizationConfig()
 
         fun pollingInterval(interval: Duration) = apply { this.pollingInterval = interval }
         fun cacheTtl(ttl: Duration) = apply { this.cacheTtl = ttl }
@@ -190,6 +194,7 @@ data class FlagKitOptions(
         fun maxPersistedEvents(max: Int) = apply { this.maxPersistedEvents = max }
         fun persistenceFlushIntervalMs(intervalMs: Long) = apply { this.persistenceFlushIntervalMs = intervalMs }
         fun evaluationJitter(config: EvaluationJitterConfig) = apply { this.evaluationJitter = config }
+        fun errorSanitization(config: ErrorSanitizationConfig) = apply { this.errorSanitization = config }
 
         fun build() = FlagKitOptions(
             apiKey = apiKey,
@@ -218,7 +223,8 @@ data class FlagKitOptions(
             eventStoragePath = eventStoragePath,
             maxPersistedEvents = maxPersistedEvents,
             persistenceFlushIntervalMs = persistenceFlushIntervalMs,
-            evaluationJitter = evaluationJitter
+            evaluationJitter = evaluationJitter,
+            errorSanitization = errorSanitization
         )
     }
 
