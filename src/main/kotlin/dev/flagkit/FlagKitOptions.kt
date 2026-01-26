@@ -8,6 +8,22 @@ import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 
 /**
+ * Configuration for evaluation jitter to protect against cache timing attacks.
+ *
+ * When enabled, adds a random delay at the start of flag evaluation to make
+ * timing-based attacks more difficult.
+ *
+ * @param enabled Whether jitter is enabled. Defaults to false.
+ * @param minMs Minimum jitter delay in milliseconds. Defaults to 5.
+ * @param maxMs Maximum jitter delay in milliseconds. Defaults to 15.
+ */
+data class EvaluationJitterConfig(
+    val enabled: Boolean = false,
+    val minMs: Long = 5,
+    val maxMs: Long = 15
+)
+
+/**
  * Configuration options for the FlagKit SDK.
  */
 data class FlagKitOptions(
@@ -43,7 +59,9 @@ data class FlagKitOptions(
     /** Maximum number of events to persist */
     val maxPersistedEvents: Int = DEFAULT_MAX_PERSISTED_EVENTS,
     /** Milliseconds between persistence flush operations */
-    val persistenceFlushIntervalMs: Long = DEFAULT_PERSISTENCE_FLUSH_INTERVAL_MS
+    val persistenceFlushIntervalMs: Long = DEFAULT_PERSISTENCE_FLUSH_INTERVAL_MS,
+    /** Evaluation jitter configuration for timing attack protection */
+    val evaluationJitter: EvaluationJitterConfig = EvaluationJitterConfig()
 ) {
     fun validate() {
         require(apiKey.isNotBlank()) {
@@ -104,6 +122,7 @@ data class FlagKitOptions(
         private var eventStoragePath: String? = null
         private var maxPersistedEvents = DEFAULT_MAX_PERSISTED_EVENTS
         private var persistenceFlushIntervalMs = DEFAULT_PERSISTENCE_FLUSH_INTERVAL_MS
+        private var evaluationJitter = EvaluationJitterConfig()
 
         fun pollingInterval(interval: Duration) = apply { this.pollingInterval = interval }
         fun cacheTtl(ttl: Duration) = apply { this.cacheTtl = ttl }
@@ -126,6 +145,7 @@ data class FlagKitOptions(
         fun eventStoragePath(path: String) = apply { this.eventStoragePath = path }
         fun maxPersistedEvents(max: Int) = apply { this.maxPersistedEvents = max }
         fun persistenceFlushIntervalMs(intervalMs: Long) = apply { this.persistenceFlushIntervalMs = intervalMs }
+        fun evaluationJitter(config: EvaluationJitterConfig) = apply { this.evaluationJitter = config }
 
         fun build() = FlagKitOptions(
             apiKey = apiKey,
@@ -151,7 +171,8 @@ data class FlagKitOptions(
             persistEvents = persistEvents,
             eventStoragePath = eventStoragePath,
             maxPersistedEvents = maxPersistedEvents,
-            persistenceFlushIntervalMs = persistenceFlushIntervalMs
+            persistenceFlushIntervalMs = persistenceFlushIntervalMs,
+            evaluationJitter = evaluationJitter
         )
     }
 

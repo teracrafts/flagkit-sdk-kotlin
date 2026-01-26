@@ -22,6 +22,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.*
 import java.time.Instant
+import kotlin.random.Random
 import kotlin.time.Duration
 
 /**
@@ -365,6 +366,22 @@ class FlagKitClient(
     }
 
     /**
+     * Applies evaluation jitter to protect against cache timing attacks.
+     *
+     * When enabled, this adds a random delay at the start of flag evaluation
+     * to make timing-based attacks more difficult.
+     */
+    private fun applyEvaluationJitter() {
+        if (options.evaluationJitter.enabled) {
+            val jitterMs = Random.nextLong(
+                options.evaluationJitter.minMs,
+                options.evaluationJitter.maxMs + 1
+            )
+            Thread.sleep(jitterMs)
+        }
+    }
+
+    /**
      * Evaluate a flag and get full result details.
      *
      * @param key The flag key.
@@ -377,6 +394,9 @@ class FlagKitClient(
         defaultValue: FlagValue,
         contextOverride: EvaluationContext? = null
     ): EvaluationResult {
+        // Apply jitter at the start of evaluation for timing attack protection
+        applyEvaluationJitter()
+
         val effectiveContext = contextManager.mergeContext(contextOverride)
 
         // Check cache first
