@@ -35,7 +35,7 @@ object ErrorSanitizer {
         // Unix-style paths (at least 2 directory levels)
         Regex("""/(?:[\w.-]+/)+[\w.-]+""") to "[PATH]",
         // Windows-style paths
-        Regex("""[A-Za-z]:\\(?:[\w.-]+\\)+[\w.-]*""") to "[PATH]",
+        Regex("""[A-Za-z]:\\(?:[\w\s.-]+\\)+[\w.-]*""") to "[PATH]",
         // IP addresses (IPv4)
         Regex("""\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b""") to "[IP]",
         // SDK API keys
@@ -45,7 +45,7 @@ object ErrorSanitizer {
         // CLI API keys
         Regex("""cli_[a-zA-Z0-9_-]{8,}""") to "cli_[REDACTED]",
         // Email addresses
-        Regex("""[\w.-]+@[\w.-]+\.\w+""") to "[EMAIL]"
+        Regex("""[\w.+-]+@[\w.-]+\.\w+""") to "[EMAIL]"
     )
 
     /**
