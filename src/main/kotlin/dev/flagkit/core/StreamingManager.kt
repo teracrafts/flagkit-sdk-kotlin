@@ -1,14 +1,18 @@
 package dev.flagkit.core
 
-import com.google.gson.Gson
-import com.google.gson.reflect.TypeToken
 import dev.flagkit.types.FlagState
+import io.ktor.client.*
+import io.ktor.client.engine.cio.*
+import io.ktor.client.plugins.*
+import io.ktor.client.request.*
+import io.ktor.client.statement.*
+import io.ktor.http.*
+import io.ktor.utils.io.*
 import kotlinx.coroutines.*
-import okhttp3.*
+import kotlinx.coroutines.CancellationException
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
 import org.slf4j.LoggerFactory
-import java.io.BufferedReader
-import java.io.InputStreamReader
-import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
@@ -36,9 +40,15 @@ data class StreamingConfig(
     val heartbeatIntervalMs: Long = 30000
 )
 
+@Serializable
 private data class StreamTokenResponse(
     val token: String,
     val expiresIn: Int
+)
+
+@Serializable
+private data class DeleteData(
+    val key: String
 )
 
 /**
@@ -65,18 +75,21 @@ class StreamingManager(
     private val onFallbackToPolling: () -> Unit
 ) {
     private val logger = LoggerFactory.getLogger(StreamingManager::class.java)
-    private val gson = Gson()
+    private val json = Json { ignoreUnknownKeys = true }
 
-    private val httpClient = OkHttpClient.Builder()
-        .readTimeout(0, TimeUnit.MILLISECONDS) // No timeout for SSE
-        .build()
+    private val httpClient = HttpClient(CIO) {
+        install(HttpTimeout) {
+            requestTimeoutMillis = HttpTimeout.INFINITE_TIMEOUT_MS
+            socketTimeoutMillis = HttpTimeout.INFINITE_TIMEOUT_MS
+        }
+    }
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val state = AtomicReference(StreamingState.DISCONNECTED)
     private val consecutiveFailures = AtomicInteger(0)
     private val lastHeartbeat = AtomicLong(System.currentTimeMillis())
 
-    private var currentCall: Call? = null
+    private var connectionJob: Job? = null
     private var tokenRefreshJob: Job? = null
     private var heartbeatJob: Job? = null
     private var retryJob: Job? = null
@@ -101,7 +114,7 @@ class StreamingManager(
         }
 
         state.set(StreamingState.CONNECTING)
-        scope.launch { initiateConnection() }
+        connectionJob = scope.launch { initiateConnection() }
     }
 
     /**
@@ -142,23 +155,21 @@ class StreamingManager(
         }
     }
 
-    private fun fetchStreamToken(): StreamTokenResponse {
+    private suspend fun fetchStreamToken(): StreamTokenResponse {
         val tokenUrl = "$baseUrl/sdk/stream/token"
 
-        val body = RequestBody.create(MediaType.parse("application/json"), "{}")
-        val request = Request.Builder()
-            .url(tokenUrl)
-            .post(body)
-            .addHeader("Content-Type", "application/json")
-            .addHeader("X-API-Key", getApiKey())
-            .build()
-
-        httpClient.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) {
-                throw Exception("Failed to fetch stream token: ${response.code()}")
-            }
-            return gson.fromJson(response.body()?.string(), StreamTokenResponse::class.java)
+        val response = httpClient.post(tokenUrl) {
+            contentType(ContentType.Application.Json)
+            header("X-API-Key", getApiKey())
+            setBody("{}")
         }
+
+        if (!response.status.isSuccess()) {
+            throw Exception("Failed to fetch stream token: ${response.status.value}")
+        }
+
+        val body = response.bodyAsText()
+        return json.decodeFromString<StreamTokenResponse>(body)
     }
 
     private fun scheduleTokenRefresh(delayMs: Long) {
@@ -180,31 +191,23 @@ class StreamingManager(
     private suspend fun createConnection(token: String) {
         val streamUrl = "$baseUrl/sdk/stream?token=$token"
 
-        val request = Request.Builder()
-            .url(streamUrl)
-            .addHeader("Accept", "text/event-stream")
-            .addHeader("Cache-Control", "no-cache")
-            .build()
-
-        currentCall = httpClient.newCall(request)
-
         try {
-            val response = withContext(Dispatchers.IO) {
-                currentCall?.execute()
-            } ?: return
+            httpClient.prepareGet(streamUrl) {
+                header(HttpHeaders.Accept, "text/event-stream")
+                header(HttpHeaders.CacheControl, "no-cache")
+            }.execute { response ->
+                if (!response.status.isSuccess()) {
+                    logger.error("SSE connection failed: {}", response.status.value)
+                    handleConnectionFailure()
+                    return@execute
+                }
 
-            if (!response.isSuccessful) {
-                logger.error("SSE connection failed: {}", response.code())
-                handleConnectionFailure()
-                return
+                handleOpen()
+                readEvents(response)
             }
-
-            handleOpen()
-            readEvents(response)
+        } catch (e: CancellationException) {
+            // Normal cancellation, ignore
         } catch (e: Exception) {
-            if (currentCall?.isCanceled == true) {
-                return // Normal cancellation
-            }
             logger.error("SSE connection error", e)
             handleConnectionFailure()
         }
@@ -218,34 +221,32 @@ class StreamingManager(
         logger.info("Streaming connected")
     }
 
-    private fun readEvents(response: Response) {
-        response.body()?.byteStream()?.let { stream ->
-            BufferedReader(InputStreamReader(stream)).use { reader ->
-                var eventType: String? = null
-                val dataBuilder = StringBuilder()
+    private suspend fun readEvents(response: HttpResponse) {
+        val channel: ByteReadChannel = response.bodyAsChannel()
+        var eventType: String? = null
+        val dataBuilder = StringBuilder()
 
-                reader.lineSequence().forEach { line ->
-                    val trimmedLine = line.trim()
+        while (!channel.isClosedForRead) {
+            val line = channel.readUTF8Line() ?: break
+            val trimmedLine = line.trim()
 
-                    // Empty line = end of event
-                    if (trimmedLine.isEmpty()) {
-                        if (eventType != null && dataBuilder.isNotEmpty()) {
-                            processEvent(eventType!!, dataBuilder.toString())
-                            eventType = null
-                            dataBuilder.clear()
-                        }
-                        return@forEach
-                    }
+            // Empty line = end of event
+            if (trimmedLine.isEmpty()) {
+                if (eventType != null && dataBuilder.isNotEmpty()) {
+                    processEvent(eventType, dataBuilder.toString())
+                    eventType = null
+                    dataBuilder.clear()
+                }
+                continue
+            }
 
-                    // Parse SSE format
-                    when {
-                        trimmedLine.startsWith("event:") -> {
-                            eventType = trimmedLine.substring(6).trim()
-                        }
-                        trimmedLine.startsWith("data:") -> {
-                            dataBuilder.append(trimmedLine.substring(5).trim())
-                        }
-                    }
+            // Parse SSE format
+            when {
+                trimmedLine.startsWith("event:") -> {
+                    eventType = trimmedLine.substring(6).trim()
+                }
+                trimmedLine.startsWith("data:") -> {
+                    dataBuilder.append(trimmedLine.substring(5).trim())
                 }
             }
         }
@@ -260,16 +261,15 @@ class StreamingManager(
         try {
             when (eventType) {
                 "flag_updated" -> {
-                    val flag = gson.fromJson(data, FlagState::class.java)
+                    val flag = json.decodeFromString<FlagState>(data)
                     onFlagUpdate(flag)
                 }
                 "flag_deleted" -> {
-                    val deleteObj = gson.fromJson(data, Map::class.java)
-                    (deleteObj["key"] as? String)?.let { onFlagDelete(it) }
+                    val deleteData = json.decodeFromString<DeleteData>(data)
+                    onFlagDelete(deleteData.key)
                 }
                 "flags_reset" -> {
-                    val type = object : TypeToken<List<FlagState>>() {}.type
-                    val flags: List<FlagState> = gson.fromJson(data, type)
+                    val flags = json.decodeFromString<List<FlagState>>(data)
                     onFlagsReset(flags)
                 }
                 "heartbeat" -> {
@@ -297,11 +297,11 @@ class StreamingManager(
     }
 
     private fun scheduleReconnect() {
-        val delay = getReconnectDelay()
-        logger.debug("Scheduling reconnect in {}ms, attempt {}", delay, consecutiveFailures.get())
+        val delayMs = getReconnectDelay()
+        logger.debug("Scheduling reconnect in {}ms, attempt {}", delayMs, consecutiveFailures.get())
 
         scope.launch {
-            delay(delay)
+            delay(delayMs)
             connect()
         }
     }
@@ -309,9 +309,9 @@ class StreamingManager(
     private fun getReconnectDelay(): Long {
         val baseDelay = config.reconnectIntervalMs
         val backoff = 2.0.pow((consecutiveFailures.get() - 1).toDouble())
-        val delay = (baseDelay * backoff).toLong()
+        val delayMs = (baseDelay * backoff).toLong()
         // Cap at 30 seconds
-        return min(delay, 30000)
+        return min(delayMs, 30000)
     }
 
     private fun scheduleStreamingRetry() {
@@ -349,8 +349,8 @@ class StreamingManager(
     }
 
     private fun cleanup() {
-        currentCall?.cancel()
-        currentCall = null
+        connectionJob?.cancel()
+        connectionJob = null
         tokenRefreshJob?.cancel()
         tokenRefreshJob = null
         stopHeartbeatMonitor()
@@ -363,6 +363,7 @@ class StreamingManager(
      */
     fun shutdown() {
         disconnect()
+        httpClient.close()
         scope.cancel()
     }
 }
