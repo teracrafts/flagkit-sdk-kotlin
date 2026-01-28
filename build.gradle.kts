@@ -46,6 +46,25 @@ tasks.jacocoTestReport {
     }
 }
 
+// SDK Lab task for internal verification
+sourceSets {
+    create("lab") {
+        kotlin.srcDir("sdk-lab")
+        compileClasspath += sourceSets.main.get().output
+        runtimeClasspath += sourceSets.main.get().output
+    }
+}
+
+configurations["labImplementation"].extendsFrom(configurations.implementation.get())
+configurations["labRuntimeOnly"].extendsFrom(configurations.runtimeOnly.get())
+
+tasks.register<JavaExec>("lab") {
+    description = "Run SDK lab verification"
+    group = "verification"
+    mainClass.set("sdklab.RunnerKt")
+    classpath = sourceSets["lab"].runtimeClasspath
+}
+
 publishing {
     publications {
         create<MavenPublication>("maven") {
