@@ -144,6 +144,8 @@ class HttpClient(
             accept(ContentType.Application.Json)
             header("X-API-Key", currentApiKey)
             header("User-Agent", "FlagKit-Kotlin/1.0.0")
+            header("X-FlagKit-SDK-Version", "1.0.0")
+            header("X-FlagKit-SDK-Language", "kotlin")
             params?.forEach { (key, value) -> parameter(key, value) }
 
             // Add request signing for POST requests
