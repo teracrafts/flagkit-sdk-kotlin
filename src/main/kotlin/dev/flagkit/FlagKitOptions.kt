@@ -3,6 +3,8 @@ package dev.flagkit
 import dev.flagkit.error.ErrorCode
 import dev.flagkit.error.ErrorSanitizationConfig
 import dev.flagkit.error.FlagKitException
+import dev.flagkit.http.UsageMetrics
+import dev.flagkit.http.UsageUpdateCallback
 import dev.flagkit.utils.SecurityConfig
 import dev.flagkit.utils.validateLocalPortRestriction
 import kotlin.time.Duration
@@ -104,7 +106,21 @@ data class FlagKitOptions(
     /** Evaluation jitter configuration for timing attack protection */
     val evaluationJitter: EvaluationJitterConfig = EvaluationJitterConfig(),
     /** Error message sanitization configuration to prevent information leakage */
-    val errorSanitization: ErrorSanitizationConfig = ErrorSanitizationConfig()
+    val errorSanitization: ErrorSanitizationConfig = ErrorSanitizationConfig(),
+    /**
+     * Callback for usage metrics updates.
+     * Provides visibility into API usage, rate limits, and subscription status.
+     */
+    val onUsageUpdate: UsageUpdateCallback? = null,
+    /**
+     * Callback when subscription error occurs (e.g., suspended).
+     * Receives the error message from the server.
+     */
+    val onSubscriptionError: ((String) -> Unit)? = null,
+    /**
+     * Callback when connection limit is reached for streaming.
+     */
+    val onConnectionLimitError: (() -> Unit)? = null
 ) {
     fun validate() {
         require(apiKey.isNotBlank()) {
@@ -169,6 +185,9 @@ data class FlagKitOptions(
         private var persistenceFlushIntervalMs = DEFAULT_PERSISTENCE_FLUSH_INTERVAL_MS
         private var evaluationJitter = EvaluationJitterConfig()
         private var errorSanitization = ErrorSanitizationConfig()
+        private var onUsageUpdate: UsageUpdateCallback? = null
+        private var onSubscriptionError: ((String) -> Unit)? = null
+        private var onConnectionLimitError: (() -> Unit)? = null
 
         fun pollingInterval(interval: Duration) = apply { this.pollingInterval = interval }
         fun cacheTtl(ttl: Duration) = apply { this.cacheTtl = ttl }
@@ -195,6 +214,9 @@ data class FlagKitOptions(
         fun persistenceFlushIntervalMs(intervalMs: Long) = apply { this.persistenceFlushIntervalMs = intervalMs }
         fun evaluationJitter(config: EvaluationJitterConfig) = apply { this.evaluationJitter = config }
         fun errorSanitization(config: ErrorSanitizationConfig) = apply { this.errorSanitization = config }
+        fun onUsageUpdate(callback: UsageUpdateCallback) = apply { this.onUsageUpdate = callback }
+        fun onSubscriptionError(callback: (String) -> Unit) = apply { this.onSubscriptionError = callback }
+        fun onConnectionLimitError(callback: () -> Unit) = apply { this.onConnectionLimitError = callback }
 
         fun build() = FlagKitOptions(
             apiKey = apiKey,
@@ -224,7 +246,10 @@ data class FlagKitOptions(
             maxPersistedEvents = maxPersistedEvents,
             persistenceFlushIntervalMs = persistenceFlushIntervalMs,
             evaluationJitter = evaluationJitter,
-            errorSanitization = errorSanitization
+            errorSanitization = errorSanitization,
+            onUsageUpdate = onUsageUpdate,
+            onSubscriptionError = onSubscriptionError,
+            onConnectionLimitError = onConnectionLimitError
         )
     }
 
