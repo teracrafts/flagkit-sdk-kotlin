@@ -31,6 +31,44 @@ enum class StreamingState {
 }
 
 /**
+ * SSE error codes from server.
+ *
+ * These represent application-level errors sent as SSE events,
+ * distinct from connection errors.
+ */
+enum class StreamErrorCode {
+    /** Token is invalid, need full re-authentication */
+    TOKEN_INVALID,
+    /** Token has expired, refresh and reconnect */
+    TOKEN_EXPIRED,
+    /** Subscription is suspended, notify user and fall back */
+    SUBSCRIPTION_SUSPENDED,
+    /** Too many connections, implement backoff */
+    CONNECTION_LIMIT,
+    /** Streaming service unavailable, fall back to polling */
+    STREAMING_UNAVAILABLE
+}
+
+/**
+ * SSE error event data structure.
+ */
+@Serializable
+data class StreamErrorData(
+    val code: String,
+    val message: String
+) {
+    /**
+     * Converts the string code to StreamErrorCode enum.
+     * @return The corresponding StreamErrorCode or null if unknown
+     */
+    fun toStreamErrorCode(): StreamErrorCode? = try {
+        StreamErrorCode.valueOf(code)
+    } catch (_: IllegalArgumentException) {
+        null
+    }
+}
+
+/**
  * Streaming configuration.
  */
 data class StreamingConfig(
@@ -64,6 +102,7 @@ private data class DeleteData(
  * - Automatic reconnection with exponential backoff
  * - Graceful degradation to polling after max failures
  * - Heartbeat monitoring for connection health
+ * - SSE error event handling (subscription errors, connection limits)
  */
 class StreamingManager(
     private val baseUrl: String,
@@ -72,7 +111,9 @@ class StreamingManager(
     private val onFlagUpdate: (FlagState) -> Unit,
     private val onFlagDelete: (String) -> Unit,
     private val onFlagsReset: (List<FlagState>) -> Unit,
-    private val onFallbackToPolling: () -> Unit
+    private val onFallbackToPolling: () -> Unit,
+    private val onSubscriptionError: ((String) -> Unit)? = null,
+    private val onConnectionLimitError: (() -> Unit)? = null
 ) {
     private val logger = LoggerFactory.getLogger(StreamingManager::class.java)
     private val json = Json { ignoreUnknownKeys = true }
@@ -275,9 +316,81 @@ class StreamingManager(
                 "heartbeat" -> {
                     lastHeartbeat.set(System.currentTimeMillis())
                 }
+                "error" -> {
+                    handleStreamError(data)
+                }
             }
         } catch (e: Exception) {
             logger.warn("Failed to process event: {}", eventType, e)
+        }
+    }
+
+    /**
+     * Handles SSE error events from server.
+     *
+     * These are application-level errors sent as SSE events, not connection errors.
+     *
+     * Error codes:
+     * - TOKEN_INVALID: Re-authenticate completely
+     * - TOKEN_EXPIRED: Refresh token and reconnect
+     * - SUBSCRIPTION_SUSPENDED: Notify user, fall back to cached values
+     * - CONNECTION_LIMIT: Implement backoff or close other connections
+     * - STREAMING_UNAVAILABLE: Fall back to polling
+     *
+     * @param data JSON string containing StreamErrorData
+     */
+    private fun handleStreamError(data: String) {
+        try {
+            val errorData = json.decodeFromString<StreamErrorData>(data)
+            logger.warn("SSE error event received: code={}, message={}", errorData.code, errorData.message)
+
+            when (errorData.toStreamErrorCode()) {
+                StreamErrorCode.TOKEN_EXPIRED -> {
+                    // Token expired, refresh and reconnect
+                    logger.info("Stream token expired, refreshing...")
+                    cleanup()
+                    connect() // Will fetch new token
+                }
+
+                StreamErrorCode.TOKEN_INVALID -> {
+                    // Token is invalid, need full re-authentication
+                    logger.error("Stream token invalid, re-authenticating...")
+                    cleanup()
+                    connect() // Will fetch new token
+                }
+
+                StreamErrorCode.SUBSCRIPTION_SUSPENDED -> {
+                    // Subscription issue - notify and fall back
+                    logger.error("Subscription suspended: {}", errorData.message)
+                    onSubscriptionError?.invoke(errorData.message)
+                    cleanup()
+                    state.set(StreamingState.FAILED)
+                    onFallbackToPolling()
+                }
+
+                StreamErrorCode.CONNECTION_LIMIT -> {
+                    // Too many connections - implement backoff
+                    logger.warn("Connection limit reached, backing off...")
+                    onConnectionLimitError?.invoke()
+                    handleConnectionFailure()
+                }
+
+                StreamErrorCode.STREAMING_UNAVAILABLE -> {
+                    // Streaming not available - fall back to polling
+                    logger.warn("Streaming service unavailable, falling back to polling")
+                    cleanup()
+                    state.set(StreamingState.FAILED)
+                    onFallbackToPolling()
+                }
+
+                null -> {
+                    logger.warn("Unknown stream error code: {}", errorData.code)
+                    handleConnectionFailure()
+                }
+            }
+        } catch (e: Exception) {
+            // Not a JSON error event, likely a connection error
+            logger.debug("Failed to parse error event: {}", e.message)
         }
     }
 
