@@ -143,8 +143,8 @@ class HttpClient(
             contentType(ContentType.Application.Json)
             accept(ContentType.Application.Json)
             header("X-API-Key", currentApiKey)
-            header("User-Agent", "FlagKit-Kotlin/1.0.0")
-            header("X-FlagKit-SDK-Version", "1.0.0")
+            header("User-Agent", "FlagKit-Kotlin/$SDK_VERSION")
+            header("X-FlagKit-SDK-Version", SDK_VERSION)
             header("X-FlagKit-SDK-Language", "kotlin")
             params?.forEach { (key, value) -> parameter(key, value) }
 
@@ -282,6 +282,11 @@ class HttpClient(
     }
 
     companion object {
+        /**
+         * SDK version - should be updated with releases.
+         */
+        const val SDK_VERSION = "1.0.0"
+
         internal const val DEFAULT_BASE_URL = "https://api.flagkit.dev/api/v1"
         private val BASE_RETRY_DELAY = 1.seconds
         private val MAX_RETRY_DELAY = 30.seconds
