@@ -12,11 +12,14 @@ import dev.flagkit.types.EvaluationReason
 import dev.flagkit.types.EvaluationResult
 import dev.flagkit.types.FlagState
 import dev.flagkit.types.FlagValue
+import dev.flagkit.types.InitResponse
+import dev.flagkit.types.InitResponseMetadata
 import dev.flagkit.utils.DataType
 import dev.flagkit.utils.EncryptedStorage
 import dev.flagkit.utils.Logger
 import dev.flagkit.utils.SecurityException
 import dev.flagkit.utils.enforceNoPii
+import dev.flagkit.utils.isVersionLessThan
 import dev.flagkit.utils.verifyBootstrapSignature
 import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.Mutex
@@ -802,6 +805,13 @@ class FlagKitClient(
     @Suppress("UNCHECKED_CAST")
     private suspend fun fetchInitialFlags() {
         val response = httpClient.get("/sdk/init")
+
+        // Parse and check version metadata
+        val metadata = response["metadata"] as? Map<String, Any?>
+        if (metadata != null) {
+            checkVersionMetadata(metadata)
+        }
+
         val flags = response["flags"] as? List<Map<String, Any?>> ?: return
 
         flags.forEach { flagData ->
@@ -811,6 +821,58 @@ class FlagKitClient(
             } catch (e: Exception) {
                 // Skip invalid flags
             }
+        }
+    }
+
+    /**
+     * Check SDK version metadata from init response and emit appropriate warnings.
+     *
+     * Per spec, the SDK should parse and surface:
+     * - sdkVersionMin: Minimum required version (older may not work)
+     * - sdkVersionRecommended: Recommended version for optimal experience
+     * - sdkVersionLatest: Latest available version
+     * - deprecationWarning: Server-provided deprecation message
+     */
+    @Suppress("UNCHECKED_CAST")
+    private fun checkVersionMetadata(metadata: Map<String, Any?>) {
+        val currentVersion = HttpClient.SDK_VERSION
+        var warnedAboutRecommended = false
+
+        // Check for server-provided deprecation warning first
+        val deprecationWarning = metadata["deprecationWarning"] as? String
+        if (!deprecationWarning.isNullOrBlank()) {
+            logger.warn("[FlagKit] Deprecation Warning: $deprecationWarning")
+        }
+
+        // Check minimum version requirement
+        val sdkVersionMin = metadata["sdkVersionMin"] as? String
+        if (!sdkVersionMin.isNullOrBlank() && isVersionLessThan(currentVersion, sdkVersionMin)) {
+            logger.error(
+                "[FlagKit] SDK version $currentVersion is below minimum required version $sdkVersionMin. " +
+                "Some features may not work correctly. Please upgrade the SDK."
+            )
+        }
+
+        // Check recommended version
+        val sdkVersionRecommended = metadata["sdkVersionRecommended"] as? String
+        if (!sdkVersionRecommended.isNullOrBlank() && isVersionLessThan(currentVersion, sdkVersionRecommended)) {
+            logger.warn(
+                "[FlagKit] SDK version $currentVersion is below recommended version $sdkVersionRecommended. " +
+                "Consider upgrading for the best experience."
+            )
+            warnedAboutRecommended = true
+        }
+
+        // Log if a newer version is available (info level, not a warning)
+        // Only log if we haven't already warned about recommended
+        val sdkVersionLatest = metadata["sdkVersionLatest"] as? String
+        if (!sdkVersionLatest.isNullOrBlank() &&
+            isVersionLessThan(currentVersion, sdkVersionLatest) &&
+            !warnedAboutRecommended
+        ) {
+            logger.info(
+                "[FlagKit] SDK version $currentVersion - a newer version $sdkVersionLatest is available."
+            )
         }
     }
 
