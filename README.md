@@ -62,36 +62,6 @@ fun main() = runBlocking {
 - **Thread-safe** - Coroutine-safe with proper synchronization
 - **Security** - PII detection, request signing, bootstrap verification, timing attack protection
 
-## Architecture
-
-The SDK is organized into clean, modular packages:
-
-```
-dev.flagkit/
-├── FlagKit.kt              # Static methods and singleton access
-├── FlagKitClient.kt        # Main client implementation
-├── FlagKitOptions.kt       # Configuration options
-├── core/                   # Core components
-│   ├── FlagCache.kt        # In-memory cache with TTL
-│   ├── ContextManager.kt
-│   ├── PollingManager.kt
-│   ├── EventQueue.kt       # Event batching
-│   └── EventPersistence.kt # Crash-resilient persistence
-├── http/                   # HTTP client, circuit breaker, retry
-│   ├── HttpClient.kt
-│   └── CircuitBreaker.kt
-├── error/                  # Error types and codes
-│   ├── FlagKitException.kt
-│   ├── ErrorCode.kt
-│   └── ErrorSanitizer.kt
-├── types/                  # Type definitions
-│   ├── EvaluationContext.kt
-│   ├── EvaluationResult.kt
-│   └── FlagState.kt
-└── utils/                  # Utilities
-    └── Security.kt         # PII detection, HMAC signing
-```
-
 ## Configuration Options
 
 ```kotlin
@@ -192,6 +162,10 @@ runBlocking {
 }
 ```
 
+## Security
+
+The SDK includes built-in security features that can be enabled through configuration options, including request signing, bootstrap verification, cache encryption, evaluation jitter for timing attack protection, and error message sanitization. These are configurable via `FlagKitOptions.builder()`.
+
 ## API Reference
 
 ### Static Methods (FlagKit object)
@@ -230,165 +204,6 @@ runBlocking {
 | `client.getJsonValue(key, default, context)` | Get JSON value |
 | `client.track(eventType, data)` | Track an event |
 | `client.close()` | Close and release resources |
-
-## Security Features
-
-### PII Detection
-
-The SDK can detect and warn about potential PII (Personally Identifiable Information) in contexts and events:
-
-```kotlin
-// Enable strict PII mode - throws exceptions instead of warnings
-val options = FlagKitOptions.builder("sdk_...")
-    .strictPiiMode(true)
-    .build()
-
-// Attributes containing PII will throw FlagKitException
-try {
-    client.identify("user-123", mapOf(
-        "email" to "user@example.com"  // PII detected!
-    ))
-} catch (e: FlagKitException) {
-    println("PII error: ${e.message}")
-}
-
-// Use private attributes to mark fields as intentionally containing PII
-val context = EvaluationContext(
-    userId = "user-123",
-    attributes = mapOf(
-        "email" to FlagValue.StringValue("user@example.com"),
-        "_email" to FlagValue.BoolValue(true)  // Underscore prefix marks as private
-    )
-)
-```
-
-### Request Signing
-
-POST requests to the FlagKit API are signed with HMAC-SHA256 for integrity:
-
-```kotlin
-// Enabled by default, can be disabled if needed
-val options = FlagKitOptions.builder("sdk_...")
-    .enableRequestSigning(false)  // Disable signing
-    .build()
-```
-
-### Bootstrap Signature Verification
-
-Verify bootstrap data integrity using HMAC signatures:
-
-```kotlin
-// Create signed bootstrap data
-val bootstrap = Security.createBootstrapSignature(
-    flags = mapOf("feature-a" to true, "feature-b" to "value"),
-    apiKey = "sdk_your_api_key"
-)
-
-// Use signed bootstrap with verification
-val options = FlagKitOptions.builder("sdk_...")
-    .bootstrapConfig(bootstrap)
-    .bootstrapVerification(BootstrapVerificationConfig(
-        enabled = true,
-        maxAge = 86_400_000L,  // 24 hours in milliseconds
-        onFailure = "error"   // "warn" (default), "error", or "ignore"
-    ))
-    .build()
-```
-
-### Cache Encryption
-
-Enable AES-256-GCM encryption for cached flag data:
-
-```kotlin
-val options = FlagKitOptions.builder("sdk_...")
-    .enableCacheEncryption(true)
-    .build()
-```
-
-### Evaluation Jitter (Timing Attack Protection)
-
-Add random delays to flag evaluations to prevent cache timing attacks:
-
-```kotlin
-val options = FlagKitOptions.builder("sdk_...")
-    .evaluationJitter(EvaluationJitterConfig(
-        enabled = true,
-        minMs = 5,
-        maxMs = 15
-    ))
-    .build()
-```
-
-### Error Sanitization
-
-Automatically redact sensitive information from error messages:
-
-```kotlin
-val options = FlagKitOptions.builder("sdk_...")
-    .errorSanitization(ErrorSanitizationConfig(
-        enabled = true,
-        preserveOriginal = false  // Set true for debugging
-    ))
-    .build()
-// Errors will have paths, IPs, API keys, and emails redacted
-```
-
-## Event Persistence
-
-Enable crash-resilient event persistence to prevent data loss:
-
-```kotlin
-val options = FlagKitOptions.builder("sdk_...")
-    .persistEvents(true)
-    .eventStoragePath("/path/to/storage")  // Optional, defaults to temp dir
-    .maxPersistedEvents(10000)             // Optional, default 10000
-    .persistenceFlushIntervalMs(1000)      // Optional, default 1000ms
-    .build()
-```
-
-Events are written to disk before being sent, and automatically recovered on restart.
-
-## Key Rotation
-
-Support seamless API key rotation:
-
-```kotlin
-val options = FlagKitOptions.builder("sdk_primary_key")
-    .secondaryApiKey("sdk_secondary_key")
-    .build()
-// SDK will automatically failover to secondary key on 401 errors
-```
-
-## All Configuration Options
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `apiKey` | String | Required | API key for authentication |
-| `secondaryApiKey` | String? | null | Secondary key for rotation |
-| `pollingInterval` | Duration | 30s | Polling interval |
-| `cacheTtl` | Duration | 300s | Cache TTL |
-| `maxCacheSize` | Int | 1000 | Maximum cache entries |
-| `cacheEnabled` | Boolean | true | Enable local caching |
-| `enableCacheEncryption` | Boolean | false | Enable AES-256-GCM encryption |
-| `eventsEnabled` | Boolean | true | Enable event tracking |
-| `eventBatchSize` | Int | 10 | Events per batch |
-| `eventFlushInterval` | Duration | 30s | Interval between flushes |
-| `timeout` | Duration | 10s | Request timeout |
-| `retryAttempts` | Int | 3 | Number of retry attempts |
-| `circuitBreakerThreshold` | Int | 5 | Failures before circuit opens |
-| `circuitBreakerResetTimeout` | Duration | 30s | Time before half-open |
-| `bootstrap` | Map? | null | Initial flag values |
-| `bootstrapConfig` | BootstrapConfig? | null | Signed bootstrap data |
-| `bootstrapVerification` | Config | enabled | Bootstrap verification settings |
-| `localPort` | Int? | null | Local development port |
-| `strictPiiMode` | Boolean | false | Error on PII detection |
-| `enableRequestSigning` | Boolean | true | Enable request signing |
-| `persistEvents` | Boolean | false | Enable event persistence |
-| `eventStoragePath` | String? | temp dir | Event storage directory |
-| `maxPersistedEvents` | Int | 10000 | Max persisted events |
-| `persistenceFlushIntervalMs` | Long | 1000 | Persistence flush interval (ms) |
-| `evaluationJitter` | Config | disabled | Timing attack protection |
-| `errorSanitization` | Config | enabled | Sanitize error messages |
 
 ## Thread Safety
 
