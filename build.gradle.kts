@@ -5,7 +5,7 @@ plugins {
     jacoco
 }
 
-group = "dev.flagkit"
+group = "com.teracrafts"
 version = "1.0.0"
 
 repositories {
@@ -73,7 +73,7 @@ publishing {
             pom {
                 name.set("FlagKit Kotlin SDK")
                 description.set("Official Kotlin SDK for FlagKit feature flag management")
-                url.set("https://github.com/flagkit/flagkit-kotlin")
+                url.set("https://github.com/teracrafts/flagkit-sdk")
 
                 licenses {
                     license {
