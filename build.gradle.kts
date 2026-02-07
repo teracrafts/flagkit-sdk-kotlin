@@ -2,6 +2,7 @@ plugins {
     kotlin("jvm") version "1.9.22"
     kotlin("plugin.serialization") version "1.9.22"
     `maven-publish`
+    signing
     jacoco
 }
 
@@ -33,6 +34,15 @@ tasks.test {
 
 kotlin {
     jvmToolchain(17)
+}
+
+val sourcesJar by tasks.registering(Jar::class) {
+    archiveClassifier.set("sources")
+    from(sourceSets.main.get().allSource)
+}
+
+val javadocJar by tasks.registering(Jar::class) {
+    archiveClassifier.set("javadoc")
 }
 
 jacoco {
@@ -69,6 +79,8 @@ publishing {
     publications {
         create<MavenPublication>("maven") {
             from(components["java"])
+            artifact(sourcesJar)
+            artifact(javadocJar)
 
             pom {
                 name.set("FlagKit Kotlin SDK")
@@ -81,7 +93,40 @@ publishing {
                         url.set("https://opensource.org/licenses/MIT")
                     }
                 }
+
+                developers {
+                    developer {
+                        name.set("Teracrafts Team")
+                        email.set("hello@huefy.dev")
+                        organization.set("Teracrafts")
+                        organizationUrl.set("https://github.com/teracrafts")
+                    }
+                }
+
+                scm {
+                    connection.set("scm:git:git://github.com/teracrafts/flagkit-sdk.git")
+                    developerConnection.set("scm:git:ssh://github.com:teracrafts/flagkit-sdk.git")
+                    url.set("https://github.com/teracrafts/flagkit-sdk/tree/main")
+                }
             }
         }
     }
+
+    repositories {
+        maven {
+            name = "staging"
+            url = uri(layout.buildDirectory.dir("staging-deploy"))
+        }
+    }
+}
+
+signing {
+    val signingKey = System.getenv("SIGNING_KEY")
+    val signingPassword = System.getenv("SIGNING_PASSWORD")
+    if (signingKey != null && signingPassword != null) {
+        useInMemoryPgpKeys(signingKey, signingPassword)
+    } else {
+        useGpgCmd()
+    }
+    sign(publishing.publications["maven"])
 }
