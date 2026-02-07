@@ -13,7 +13,7 @@ Official Kotlin SDK for [FlagKit](https://flagkit.dev) feature flag management.
 
 ```kotlin
 dependencies {
-    implementation("dev.flagkit:flagkit-kotlin:1.0.0")
+    implementation("com.teracrafts:flagkit-kotlin:1.0.0")
 }
 ```
 
@@ -21,7 +21,7 @@ dependencies {
 
 ```groovy
 dependencies {
-    implementation 'dev.flagkit:flagkit-kotlin:1.0.0'
+    implementation 'com.teracrafts:flagkit-kotlin:1.0.0'
 }
 ```
 
