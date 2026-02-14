@@ -238,7 +238,6 @@ class FlagKitClient(
         timeout = options.timeout,
         retryAttempts = options.retryAttempts,
         circuitBreaker = circuitBreaker,
-        localPort = options.localPort,
         secondaryApiKey = options.secondaryApiKey,
         enableRequestSigning = options.enableRequestSigning
     )
