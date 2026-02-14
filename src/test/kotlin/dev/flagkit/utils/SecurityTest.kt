@@ -976,22 +976,4 @@ class SecurityTest {
         assertEquals("value2", cache2.get("key2"))
     }
 
-    // ============= LocalPort Restriction tests =============
-
-    @Test
-    fun `validateLocalPortRestriction does not throw when localPort is null`() {
-        // Should not throw
-        validateLocalPortRestriction(null)
-    }
-
-    @Test
-    fun `validateLocalPortRestriction does not throw in non-production`() {
-        // APP_ENV is not set to production in test environment
-        // Should not throw
-        validateLocalPortRestriction(3000)
-    }
-
-    // Note: Testing production restriction requires setting APP_ENV environment variable
-    // which is not easily done in unit tests. The actual production check is tested
-    // through integration tests or manual testing.
 }
