@@ -428,26 +428,16 @@ data class BootstrapVerificationResult(
 
 /**
  * Canonicalize an object to a deterministic JSON string for signature verification.
- *
- * This function ensures consistent ordering of keys and formatting to produce
- * the same output regardless of the original key ordering in the input map.
- *
- * @param obj The object to canonicalize.
- * @return A deterministic JSON string representation.
  */
 fun canonicalizeObject(obj: Map<String, Any?>): String {
     return buildCanonicalString(obj)
 }
 
-/**
- * Internal function to recursively build canonical JSON string.
- */
 private fun buildCanonicalString(value: Any?): String {
     return when (value) {
         null -> "null"
         is Boolean -> value.toString()
         is Number -> {
-            // Handle floating point numbers - remove trailing zeros
             when {
                 value is Double || value is Float -> {
                     val d = value.toDouble()
@@ -482,9 +472,6 @@ private fun buildCanonicalString(value: Any?): String {
     }
 }
 
-/**
- * Escape special characters in a JSON string.
- */
 private fun escapeJsonString(str: String): String {
     val sb = StringBuilder()
     for (c in str) {
@@ -510,20 +497,6 @@ private fun escapeJsonString(str: String): String {
 
 /**
  * Verify a bootstrap signature using HMAC-SHA256.
- *
- * This function verifies that:
- * 1. The signature matches the HMAC-SHA256 of the canonicalized flags data
- * 2. The timestamp (if provided) is not older than the configured maxAge
- *
- * Uses constant-time comparison to prevent timing attacks.
- *
- * @param flags The bootstrap flags data.
- * @param signature The HMAC-SHA256 signature to verify.
- * @param timestamp Optional timestamp when the bootstrap was generated.
- * @param apiKey The API key to use for HMAC computation.
- * @param maxAge Maximum age of the bootstrap data in milliseconds.
- * @param verificationEnabled Whether verification is enabled.
- * @return BootstrapVerificationResult indicating success or failure with message.
  */
 fun verifyBootstrapSignature(
     flags: Map<String, Any?>,
@@ -533,12 +506,10 @@ fun verifyBootstrapSignature(
     maxAge: Long,
     verificationEnabled: Boolean = true
 ): BootstrapVerificationResult {
-    // If verification is disabled, always pass
     if (!verificationEnabled) {
         return BootstrapVerificationResult(valid = true, errorMessage = null)
     }
 
-    // If no signature provided, verification cannot proceed
     if (signature == null) {
         return BootstrapVerificationResult(
             valid = false,
@@ -546,7 +517,6 @@ fun verifyBootstrapSignature(
         )
     }
 
-    // Check timestamp expiration if provided
     if (timestamp != null) {
         val now = System.currentTimeMillis()
         val age = now - timestamp
@@ -566,13 +536,9 @@ fun verifyBootstrapSignature(
         }
     }
 
-    // Canonicalize the flags data
     val canonicalData = canonicalizeObject(flags)
-
-    // Generate expected signature
     val expectedSignature = generateHmacSha256(canonicalData, apiKey)
 
-    // Constant-time comparison to prevent timing attacks
     val signatureBytes = signature.toByteArray(Charsets.UTF_8)
     val expectedBytes = expectedSignature.toByteArray(Charsets.UTF_8)
 
@@ -590,34 +556,10 @@ fun verifyBootstrapSignature(
 
 /**
  * Generate a signature for bootstrap data.
- *
- * This is a utility function for creating signed bootstrap configurations.
- *
- * @param flags The flags data to sign.
- * @param apiKey The API key to use for signing.
- * @return The HMAC-SHA256 signature as a hex string.
  */
 fun generateBootstrapSignature(flags: Map<String, Any?>, apiKey: String): String {
     val canonicalData = canonicalizeObject(flags)
     return generateHmacSha256(canonicalData, apiKey)
-}
-
-// ============= LocalPort Restriction =============
-
-/**
- * Validate that localPort is not used in production environment.
- *
- * @param localPort The local port configuration
- * @throws SecurityException if localPort is used in production
- */
-fun validateLocalPortRestriction(localPort: Int?) {
-    if (localPort != null && isProductionAppEnv()) {
-        throw SecurityException(
-            "LocalPort cannot be used in production environment. " +
-            "APP_ENV is set to 'production' but localPort is configured to $localPort. " +
-            "Remove localPort configuration or use a non-production environment."
-        )
-    }
 }
 
 /**
