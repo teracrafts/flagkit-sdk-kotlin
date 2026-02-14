@@ -6,7 +6,6 @@ import dev.flagkit.error.FlagKitException
 import dev.flagkit.http.UsageMetrics
 import dev.flagkit.http.UsageUpdateCallback
 import dev.flagkit.utils.SecurityConfig
-import dev.flagkit.utils.validateLocalPortRestriction
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 
@@ -83,7 +82,6 @@ data class FlagKitOptions(
     val bootstrapConfig: BootstrapConfig? = null,
     /** Bootstrap verification settings */
     val bootstrapVerification: BootstrapVerificationConfig = BootstrapVerificationConfig(),
-    val localPort: Int? = null,
     val isLocal: Boolean = false,
     /** Secondary API key for automatic failover on 401 errors */
     val secondaryApiKey: String? = null,
@@ -142,10 +140,6 @@ data class FlagKitOptions(
         require(cacheTtl.isPositive()) {
             throw FlagKitException.configError(ErrorCode.CONFIG_INVALID_CACHE_TTL, "Cache TTL must be positive")
         }
-
-        // Validate localPort restriction in production
-        validateLocalPortRestriction(localPort)
-
         // Validate secondary API key format if provided
         if (secondaryApiKey != null) {
             require(validPrefixes.any { secondaryApiKey.startsWith(it) }) {
@@ -172,7 +166,6 @@ data class FlagKitOptions(
         private var bootstrap: Map<String, Any>? = null
         private var bootstrapConfig: BootstrapConfig? = null
         private var bootstrapVerification = BootstrapVerificationConfig()
-        private var localPort: Int? = null
         private var isLocal = false
         private var secondaryApiKey: String? = null
         private var strictPiiMode = false
@@ -201,7 +194,6 @@ data class FlagKitOptions(
         fun bootstrap(data: Map<String, Any>) = apply { this.bootstrap = data }
         fun bootstrapConfig(config: BootstrapConfig) = apply { this.bootstrapConfig = config }
         fun bootstrapVerification(config: BootstrapVerificationConfig) = apply { this.bootstrapVerification = config }
-        fun localPort(port: Int) = apply { this.localPort = port }
         fun isLocal(local: Boolean = true) = apply { this.isLocal = local }
         fun secondaryApiKey(key: String) = apply { this.secondaryApiKey = key }
         fun strictPiiMode(enabled: Boolean = true) = apply { this.strictPiiMode = enabled }
@@ -234,7 +226,6 @@ data class FlagKitOptions(
             bootstrap = bootstrap,
             bootstrapConfig = bootstrapConfig,
             bootstrapVerification = bootstrapVerification,
-            localPort = localPort,
             isLocal = isLocal,
             secondaryApiKey = secondaryApiKey,
             strictPiiMode = strictPiiMode,
