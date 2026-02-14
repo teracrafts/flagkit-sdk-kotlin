@@ -1,9 +1,22 @@
 package dev.flagkit
 
+import dev.flagkit.http.HttpClient
 import kotlin.test.*
 import kotlin.time.Duration.Companion.seconds
 
 class FlagKitOptionsTest {
+    @Test
+    fun `test getBaseUrl returns a known URL`() {
+        val baseUrl = HttpClient.getBaseUrl()
+        // Should return one of the known base URLs depending on FLAGKIT_MODE env
+        assertTrue(
+            baseUrl == HttpClient.DEFAULT_BASE_URL ||
+            baseUrl == HttpClient.BETA_BASE_URL ||
+            baseUrl == HttpClient.LOCAL_BASE_URL,
+            "getBaseUrl() should return a known base URL, got: $baseUrl"
+        )
+    }
+
     @Test
     fun `test isLocal defaults to false`() {
         val options = FlagKitOptions(apiKey = "sdk_test_key")
