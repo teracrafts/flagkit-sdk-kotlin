@@ -57,7 +57,6 @@ class HttpClient(
     private val timeout: Duration,
     private val retryAttempts: Int,
     private val circuitBreaker: CircuitBreaker,
-    private val localPort: Int? = null,
     private val secondaryApiKey: String? = null,
     private val enableRequestSigning: Boolean = true,
     private val onUsageUpdate: UsageUpdateCallback? = null
@@ -69,6 +68,7 @@ class HttpClient(
     }
 
     private val keyRotationManager = KeyRotationManager(apiKey, secondaryApiKey)
+    private val resolvedBaseUrl: String = getBaseUrl()
 
     private val client = HttpClient(CIO) {
         install(ContentNegotiation) {
@@ -135,10 +135,9 @@ class HttpClient(
         params: Map<String, String>?,
         body: Map<String, Any?>?
     ): Map<String, Any?> {
-        val baseUrl = getBaseUrl(localPort)
         val currentApiKey = keyRotationManager.getCurrentKey()
 
-        val response = client.request("${baseUrl}$path") {
+        val response = client.request("${resolvedBaseUrl}$path") {
             this.method = method
             contentType(ContentType.Application.Json)
             accept(ContentType.Application.Json)
@@ -288,11 +287,17 @@ class HttpClient(
         const val SDK_VERSION = "1.0.8"
 
         internal const val DEFAULT_BASE_URL = "https://api.flagkit.dev/api/v1"
+        internal const val BETA_BASE_URL = "https://api.beta.flagkit.dev/api/v1"
+        internal const val LOCAL_BASE_URL = "https://api.flagkit.on/api/v1"
         private val BASE_RETRY_DELAY = 1.seconds
         private val MAX_RETRY_DELAY = 30.seconds
         private const val JITTER_FACTOR = 0.1
 
-        fun getBaseUrl(localPort: Int?): String =
-            if (localPort != null) "http://localhost:$localPort/api/v1" else DEFAULT_BASE_URL
+        fun getBaseUrl(): String =
+            when (System.getenv("FLAGKIT_MODE")?.trim()?.lowercase()) {
+                "local" -> LOCAL_BASE_URL
+                "beta" -> BETA_BASE_URL
+                else -> DEFAULT_BASE_URL
+            }
     }
 }
