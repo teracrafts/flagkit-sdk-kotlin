@@ -284,7 +284,7 @@ class HttpClient(
         /**
          * SDK version - should be updated with releases.
          */
-        const val SDK_VERSION = "1.0.9"
+        const val SDK_VERSION = "1.1.0"
 
         internal const val DEFAULT_BASE_URL = "https://api.flagkit.dev/api/v1"
         internal const val BETA_BASE_URL = "https://api.beta.flagkit.dev/api/v1"
